@@ -1,17 +1,24 @@
 from __future__ import annotations
+
 import io
+
+import numpy as np
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-import numpy as np
 from PIL import Image
 
-from app.explainability.overlay import heatmap_to_overlay, ensemble_heatmap
+from app.explainability.overlay import ensemble_heatmap, heatmap_to_overlay
 from app.models.registry import ModelRegistry
-from app.storage.result_cache import ResultCache
 from app.preprocessing.face_detection import detect_largest_face
 from app.preprocessing.image_transforms import preprocess
+from app.storage.result_cache import ResultCache
+
 
 router = APIRouter()
+
+# Which models run on the face crop vs the full image (mirrors pipeline.py)
+_FULL_IMAGE_MODELS = {"f3net", "vit"}
+_VALID_MODELS = {"efficientnet", "xceptionnet", "f3net", "vit", "ensemble"}
 
 
 @router.get("/heatmap/{result_id}/{model_name}")
@@ -20,15 +27,9 @@ async def get_heatmap(result_id: str, model_name: str):
     if result is None:
         raise HTTPException(status_code=404, detail="Result not found or expired.")
 
-    registry = ModelRegistry.get_instance()
-    allowed = {"univfd", "efficientnet", "ensemble"}
-    if model_name not in allowed:
-        raise HTTPException(status_code=400, detail=f"model_name must be one of {allowed}")
+    if model_name not in _VALID_MODELS:
+        raise HTTPException(status_code=400, detail=f"model_name must be one of {_VALID_MODELS}")
 
-    # We need to re-run to generate heatmap (image not stored; regenerate from stored dims)
-    # For now return a 404 with explanation if image not re-accessible.
-    # In production, store the image bytes in the cache.
-    # Here we check for the stored image in the cache extension.
     cache = ResultCache.get_instance()
     image_bytes = getattr(cache, "_images", {}).get(result_id)
     if image_bytes is None:
@@ -39,27 +40,41 @@ async def get_heatmap(result_id: str, model_name: str):
 
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     face_crop = detect_largest_face(np.array(image))
-    working_image = Image.fromarray(face_crop) if face_crop is not None else image
-    preprocessed = preprocess(working_image)
+    face_image = Image.fromarray(face_crop) if face_crop is not None else image
+
+    face_input = preprocess(face_image)
+    full_input = preprocess(image)
+
+    registry = ModelRegistry.get_instance()
 
     if model_name == "ensemble":
-        heatmaps = []
-        weights  = []
-        ensemble_weights = {"univfd": 0.4, "efficientnet": 0.6} if result.face_detected else {"univfd": 1.0}
+        # Same weighting as the fusion engine, simplified to a fixed mix
+        # Mirrors fusion.py base weights (ViT dominates, EfficientNet supports).
+        ensemble_weights = (
+            {"vit": 0.70, "efficientnet": 0.30}
+            if result.face_detected
+            else {"vit": 0.80, "efficientnet": 0.20}
+        )
+        heatmaps: list[np.ndarray] = []
+        weights: list[float] = []
         for name, weight in ensemble_weights.items():
             det = registry.get(name)
             if det is None:
                 continue
-            hm = det.get_heatmap(preprocessed)
+            chosen_input = full_input if name in _FULL_IMAGE_MODELS else face_input
+            hm = det.get_heatmap(chosen_input)
             if hm is not None:
                 heatmaps.append(hm)
                 weights.append(weight)
+        if not heatmaps:
+            raise HTTPException(status_code=503, detail="No model produced a heatmap.")
         heatmap = ensemble_heatmap(heatmaps, weights)
     else:
         det = registry.get(model_name)
         if det is None:
             raise HTTPException(status_code=503, detail=f"Model '{model_name}' not loaded.")
-        heatmap = det.get_heatmap(preprocessed)
+        chosen_input = full_input if model_name in _FULL_IMAGE_MODELS else face_input
+        heatmap = det.get_heatmap(chosen_input)
         if heatmap is None:
             raise HTTPException(status_code=503, detail=f"Model '{model_name}' does not support heatmaps.")
 

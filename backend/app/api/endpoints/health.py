@@ -79,7 +79,7 @@ async def ready():
     registry = ModelRegistry.get_instance()
     loaded_models = list(registry.all().keys())
 
-    expected_models = ["univfd", "efficientnet"]
+    expected_models = ["efficientnet", "vit", "f3net"]
     missing_models = [m for m in expected_models if m not in loaded_models]
 
     mediapipe_asset_ok = _MEDIAPIPE_ASSET.exists()

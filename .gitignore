@@ -5,6 +5,8 @@ models/efficientnet/
 models/xception/
 models/dire/
 backend/app/models/*.pth
+backend/app/models/weights
+backend/app/models/weights/
 backend/app/models/mediapipe/
 
 # Local datasets

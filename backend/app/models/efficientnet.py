@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from app.models.base import BaseDetector, ModelOutput
+from app.models.calibration import calibrated_fake_prob
 
-DEBUG_EFFNET_LOADING = True
+DEBUG_EFFNET_LOADING = False
 
 
 class EfficientNetDetector(BaseDetector):
@@ -200,11 +201,10 @@ class EfficientNetDetector(BaseDetector):
             logits = self.model(tensor)
             probs = torch.softmax(logits, dim=-1).squeeze()
 
-        # 🔥 Stable probability extraction
-        fake_prob = float(probs[1])
-        real_prob = float(probs[0])
-
-        # Clamp to avoid extreme instability
+        # Class order from training (ImageFolder on Dataset/): Fake=0, Real=1
+        raw_fake = float(probs[0])
+        # Apply Platt-scaling calibration if available
+        fake_prob = calibrated_fake_prob("efficientnet", raw_fake, domain="fake_prob")
         fake_prob = max(min(fake_prob, 0.999), 0.001)
         real_prob = 1.0 - fake_prob
 
@@ -229,7 +229,7 @@ class EfficientNetDetector(BaseDetector):
             self.model.zero_grad()
 
             one_hot = torch.zeros_like(logits)
-            one_hot[0, 1] = 1.0
+            one_hot[0, 0] = 1.0  # Fake class
             logits.backward(gradient=one_hot, retain_graph=False)
 
             acts = self._activations

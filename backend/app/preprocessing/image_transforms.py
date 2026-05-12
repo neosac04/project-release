@@ -30,6 +30,13 @@ _freq_transform = T.Compose([
     T.CenterCrop(256),
 ])
 
+# DeepfakeBench-style: 256×256, normalize to [-1, 1]
+_dfb_transform = T.Compose([
+    T.Resize((256, 256), interpolation=T.InterpolationMode.BILINEAR),
+    T.ToTensor(),
+    T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+])
+
 
 def preprocess(image: Image.Image) -> dict:
     rgb = image.convert("RGB")
@@ -37,6 +44,7 @@ def preprocess(image: Image.Image) -> dict:
     return {
         "clip_tensor": _clip_transform(rgb),
         "imagenet_tensor": _imagenet_transform(rgb),
+        "dfb_tensor": _dfb_transform(rgb),
         "freq_pil": _freq_transform(rgb),
         "raw_np": raw_np,
         "gray_np": np.array(rgb.convert("L")),

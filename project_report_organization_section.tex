@@ -1,0 +1,132 @@
+\chapter{PROJECT ORGANIZATION}
+
+%------------------------------------------------------------------
+% 8.1  Software Process Model
+%------------------------------------------------------------------
+\section{Software Process Model}
+
+\begin{spacing}{1.5}
+The project followed an \textbf{Agile iterative model} with two-week sprints. This was a practical choice rather than a formal one --- with four team members working in parallel on a research-heavy ML project, a rigid waterfall plan would have broken down quickly as model results fed back into architectural decisions. The iterative approach allowed us to adjust the ensemble weights, swap out model variants, and redesign the frontend layout as we learned more about what worked.
+
+Each sprint had a designated lead responsible for coordinating that fortnight's tasks and running the brief end-of-sprint review with the project guide. Responsibilities within sprints overlapped considerably in practice, but primary ownership was assigned to avoid ambiguity.
+
+The development followed a loose three-phase structure:
+\begin{itemize}
+  \item \textbf{Phase 1 --- Research and Design (January--February):} Literature survey, dataset selection, and system architecture design. Output: a fixed tech stack decision and a documented API contract between the frontend and backend teams.
+  \item \textbf{Phase 2 --- Development and Training (February--May):} Parallel streams for backend, model training, video detection, and frontend. The API contract from Phase 1 meant these streams could progress largely independently and be integrated at sprint boundaries.
+  \item \textbf{Phase 3 --- Integration, Evaluation, and Documentation (April--June):} End-to-end testing, performance evaluation on the held-out test set, and report writing. Phase 3 overlapped with the tail end of Phase 2 rather than following it sequentially.
+\end{itemize}
+\end{spacing}
+
+%------------------------------------------------------------------
+% 8.2  Roles and Responsibilities
+%------------------------------------------------------------------
+\section{Roles and Responsibilities}
+
+\begin{spacing}{1.5}
+Table~\ref{tab:roles} shows the primary responsibilities assigned to each team member. The sprint lead rotation ensured that every member had direct experience coordinating work, not just executing it. Table~\ref{tab:sprints} shows the sprint lead rotation across the project duration.
+\end{spacing}
+
+\renewcommand{\arraystretch}{1.35}
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|l|p{7.5cm}|}
+\hline
+\textbf{Member} & \textbf{USN} & \textbf{Primary Responsibilities} \\
+\hline
+Sacheth N & 1MS22IS112 &
+  Model training and fine-tuning (EfficientNet-B4 and F3Net); system design and architecture decisions; overall system integration with Adithya V \\
+\hline
+Gagan G & 1MS22IS042 &
+  Video detection module development; keyframe extraction and temporal consistency pipeline; integration of video path into the backend with Adithya V \\
+\hline
+Adithya V & 1MS22IS011 &
+  Video detection development with Gagan G; overall system integration with Sacheth N; backend API coordination \\
+\hline
+Abhishek N & 1MS22IS007 &
+  Dataset preparation and curation (Kaggle and HuggingFace sources); React frontend development; project documentation and report \\
+\hline
+\end{tabular}
+\caption{Team Roles and Responsibilities}
+\label{tab:roles}
+\end{table}
+
+\renewcommand{\arraystretch}{1.35}
+\begin{table}[H]
+\centering
+\begin{tabular}{|c|l|l|p{6.0cm}|}
+\hline
+\textbf{Sprint} & \textbf{Period} & \textbf{Lead} & \textbf{Sprint Goal} \\
+\hline
+1  & Jan W1--W2  & Adithya V  & Literature survey; define project scope \\
+2  & Jan W3--W4  & Abhishek N & Dataset identification and download pipeline \\
+3  & Feb W1--W2  & Sacheth N  & System architecture; fix API contract \\
+4  & Feb W3--W4  & Gagan G    & FastAPI skeleton; model registry setup \\
+5  & Mar W1--W2  & Adithya V  & Backend inference pipeline; face detection \\
+6  & Mar W3--W4  & Sacheth N  & EfficientNet and F3Net training on Kaggle \\
+7  & Apr W1--W2  & Abhishek N & React frontend: upload page and results page \\
+8  & Apr W3--W4  & Gagan G    & Video detection module; keyframe extraction \\
+9  & May W1--W2  & Sacheth N  & End-to-end integration; heatmap pipeline \\
+10 & May W3--W4  & Adithya V  & Evaluation on test set; report writing \\
+\hline
+\end{tabular}
+\caption{Sprint Schedule and Lead Rotation}
+\label{tab:sprints}
+\end{table}
+
+%------------------------------------------------------------------
+% 8.3  Finance and Budget Estimate
+%------------------------------------------------------------------
+\section{Finance and Budget Estimate}
+
+\begin{spacing}{1.5}
+The project was designed from the outset to use only free-tier cloud resources and existing hardware, keeping the direct financial cost at zero. Table~\ref{tab:budget} itemises the resources used, their market value, and the actual cost to the project. The market values are included to give a realistic picture of what this infrastructure would cost outside an academic context.
+\end{spacing}
+
+\renewcommand{\arraystretch}{1.35}
+\begin{table}[H]
+\centering
+\begin{tabular}{|p{4.0cm}|p{4.5cm}|r|r|}
+\hline
+\textbf{Resource} & \textbf{Details} & \textbf{Market Value} & \textbf{Actual Cost} \\
+\hline
+GPU Compute (Training) &
+  Kaggle Notebooks --- NVIDIA T4 (16 GB), 30 h/week free tier &
+  \texttildelow\,\rupee6{,}000/month &
+  \rupee0 \\
+\hline
+Pretrained ViT Model &
+  HuggingFace Hub --- \texttt{dima806/deepfake\_vs\_real\_image\_detection} (free public model) &
+  --- &
+  \rupee0 \\
+\hline
+Dataset Access &
+  140k Real and Fake Faces (Kaggle); dima806 dataset (HuggingFace) --- both publicly available &
+  --- &
+  \rupee0 \\
+\hline
+Development Hardware &
+  Personal laptops (Apple M-series / Intel i5--i7, 16 GB RAM) --- pre-owned &
+  \texttildelow\,\rupee60{,}000 each &
+  \rupee0 \\
+\hline
+Cloud Hosting &
+  Not deployed to production; local development only &
+  \texttildelow\,\rupee1{,}500/month (estimated) &
+  \rupee0 \\
+\hline
+Research Papers &
+  IEEE Xplore and ACM DL accessed via university library subscription &
+  \texttildelow\,\rupee2{,}500/year &
+  \rupee0 \\
+\hline
+\textbf{Total} & & \textbf{\texttildelow\,\rupee70{,}000+} & \textbf{\rupee0} \\
+\hline
+\end{tabular}
+\caption{Project Budget Estimate}
+\label{tab:budget}
+\end{table}
+
+\begin{spacing}{1.5}
+The zero direct cost was possible because all compute-intensive work (model training) was done on Kaggle's free GPU tier, and all model weights and datasets used were publicly available at no charge. A production deployment --- adding a cloud server, domain, and SSL certificate --- would add approximately \rupee1{,}500--3{,}000 per month depending on traffic and instance size.
+\end{spacing}

@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { DetectionResponse } from '@/types/detection'
+import type { DetectionResponse, VideoDetectionResponse } from '@/types/detection'
 
 export async function submitDetection(
   file: File,
@@ -17,6 +17,28 @@ export async function submitDetection(
     },
   })
   return res.data
+}
+
+export async function submitVideoDetection(
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<VideoDetectionResponse> {
+  const form = new FormData()
+  form.append('file', file)
+
+  const res = await apiClient.post<VideoDetectionResponse>('/detect/video', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    },
+  })
+  return res.data
+}
+
+export function isVideoFile(file: File): boolean {
+  return file.type.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|m4v)$/i.test(file.name)
 }
 
 export function getHeatmapUrl(resultId: string, modelName: string): string {

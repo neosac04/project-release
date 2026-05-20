@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, ImageIcon } from 'lucide-react'
+import { Upload, ImageIcon, Film } from 'lucide-react'
 import clsx from 'clsx'
 
 interface DropZoneProps {
@@ -16,7 +16,10 @@ export function DropZone({ onFile, disabled }: DropZoneProps) {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'] },
+    accept: {
+      'image/*': ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff'],
+      'video/*': ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'],
+    },
     maxFiles: 1,
     disabled,
   })
@@ -50,11 +53,16 @@ export function DropZone({ onFile, disabled }: DropZoneProps) {
           <>
             <div>
               <p className="text-gray-300 font-semibold text-lg">
-                Drag & drop an image here
+                Drag & drop an image or video here
               </p>
               <p className="text-gray-500 text-sm mt-1">
-                or click to browse — JPG, PNG, WebP, BMP (max 10 MB)
+                or click to browse — JPG, PNG, WebP (max 10 MB) · MP4, MOV, WebM (max 100 MB)
               </p>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-gray-600">
+              <span className="flex items-center gap-1"><ImageIcon size={12} /> Images</span>
+              <span className="text-gray-700">·</span>
+              <span className="flex items-center gap-1"><Film size={12} /> Videos</span>
             </div>
           </>
         )}

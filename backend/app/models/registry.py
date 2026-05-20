@@ -9,6 +9,8 @@ from app.config.settings import MODEL_PATHS
 from app.models.base import BaseDetector
 from app.models.efficientnet import EfficientNetDetector
 from app.models.f3net import F3NetDetector
+from app.models.hive_detector import HiveDetector
+from app.models.siglip_detector import SigLIPDetector
 from app.models.vit_detector import ViTDetector
 from app.models.xceptionnet import XceptionNetDetector
 
@@ -34,31 +36,34 @@ class ModelRegistry:
         )
         log.info("loading_models", device=str(device))
 
-        repo_root = Path(__file__).resolve().parents[3]
+        # parents[2] of .../backend/app/models/registry.py = .../backend
+        repo_root = Path(__file__).resolve().parents[2]
 
         def resolve_path(path_str: str) -> Path:
             path = Path(path_str)
             return path if path.is_absolute() else (repo_root / path).resolve()
 
-        # Production trio: EfficientNet (locally trained head), ViT (HF
-        # dima806, test AUC 0.999), F3Net (kept for heatmaps + future retrain).
-        # XceptionNet is wired up but disabled — checkpoint AUC 0.475 < random.
-        # Re-enable with ENABLE_XCEPTIONNET=1 for inspection only.
         import os
         detectors: list[tuple[str, BaseDetector, str]] = [
             ("efficientnet", EfficientNetDetector(), MODEL_PATHS["efficientnet"]),
-            ("vit", ViTDetector(), MODEL_PATHS["vit"]),
-            ("f3net", F3NetDetector(), MODEL_PATHS["f3net"]),
+            ("vit",          ViTDetector(),          MODEL_PATHS["vit"]),
+            ("f3net",        F3NetDetector(),         MODEL_PATHS["f3net"]),
+            ("siglip",       SigLIPDetector(),        MODEL_PATHS["siglip"]),
         ]
         if os.getenv("ENABLE_XCEPTIONNET") == "1":
             detectors.insert(2, ("xceptionnet", XceptionNetDetector(), MODEL_PATHS["xceptionnet"]))
 
+        # Hive: only register if api_key is provided
+        from app.config.settings import settings as _settings
+        if _settings.ext_api_key:
+            detectors.append(("hive", HiveDetector(), _settings.ext_api_key))
+
         for name, detector, weights_path in detectors:
-            # HF-hosted weights are pulled by the detector itself — skip the
-            # local existence check for them.
             is_remote = weights_path.startswith("huggingface://")
-            resolved_path = weights_path if is_remote else str(resolve_path(weights_path))
-            if is_remote or Path(resolved_path).exists():
+            is_api_key = (name == "hive")
+            resolved_path = weights_path if (is_remote or is_api_key) else str(resolve_path(weights_path))
+
+            if is_remote or is_api_key or Path(resolved_path).exists():
                 try:
                     detector.load(resolved_path, device)
                     self._detectors[name] = detector

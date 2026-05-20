@@ -15,5 +15,23 @@
     "raw_acc": 0.83,
     "cal_acc": 0.8875
   },
-  "_note": "Calibrated 1-D Platt scaling. Domain says whether `a*x+b` operates on raw fake_prob (efficientnet) or logit[0]-logit[1] (f3net)."
+  "siglip": {
+    "domain": "fake_prob",
+    "a": 1.0,
+    "b": 0.0,
+    "auc": 0.97,
+    "raw_acc": 0.9444,
+    "cal_acc": 0.9444,
+    "_note": "Pass-through — model is well-calibrated. Update a/b after Platt scaling on validation set."
+  },
+  "hive": {
+    "domain": "fake_prob",
+    "a": 1.0,
+    "b": 0.0,
+    "auc": 0.99,
+    "raw_acc": 0.95,
+    "cal_acc": 0.95,
+    "_note": "Pass-through — Hive scores are already probabilities."
+  },
+  "_note": "Calibrated 1-D Platt scaling. Domain says whether a*x+b operates on raw fake_prob or logit[0]-logit[1]."
 }

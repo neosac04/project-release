@@ -1,70 +1,56 @@
 """
-Adaptive confidence-weighted fusion for the model trio.
+Adaptive confidence-weighted fusion for the 5-model ensemble.
 
-Base weights vary by whether a face was detected (F3Net carries more weight when no
-face is found, since it works on the full image). Each model gets a per-prediction
-confidence bonus proportional to how far its score sits from 0.5.
+Models:
+  vit         — ViT-Base HF dima806, AUC 0.999   (global patterns)
+  siglip      — SigLIP-Base fine-tuned, 94.44%   (custom-trained binary)
+  f3net       — Frequency DCT, AUC 0.958          (GAN/diffusion artifacts)
+  efficientnet— Face-texture CNN, AUC 0.764       (micro-texture forensics)
+  hive        — External Hive AI API oracle        (conditional on api key)
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-
-# Per-model AUC on Validation/ (calibration set, 400 fake + 400 real):
-#   - ViT (dima806):   AUC 0.999  → dominant signal
-#   - F3Net (retrained head):  AUC 0.958  → strong frequency-domain second opinion
-#   - EfficientNet:    AUC 0.764  → calibrated facial-texture detector
-#   - XceptionNet:     AUC 0.475  → disabled in registry
-# Weights scaled with (AUC − 0.5), then renormalised within the face / no-face
-# routing groups. EfficientNet is downweighted heavily when no face is present
-# because its face-crop assumption breaks down.
 _BASE_WEIGHTS_FACE = {
-    "vit": 0.50,
-    "f3net": 0.35,
+    "vit":          0.35,
+    "siglip":       0.25,
+    "f3net":        0.20,
     "efficientnet": 0.15,
-    "xceptionnet": 0.0,
+    "hive":         0.05,
+    "xceptionnet":  0.00,
 }
 
 _BASE_WEIGHTS_NO_FACE = {
-    "vit": 0.55,
-    "f3net": 0.40,
-    "efficientnet": 0.05,
-    "xceptionnet": 0.0,
+    "vit":          0.35,
+    "siglip":       0.25,
+    "f3net":        0.25,
+    "efficientnet": 0.10,
+    "hive":         0.05,
+    "xceptionnet":  0.00,
 }
 
-# Uncertainty band — outside this range the local verdict is considered confident.
-UNCERTAINTY_LOW = 0.38
+UNCERTAINTY_LOW  = 0.38
 UNCERTAINTY_HIGH = 0.62
-
-# Per-model confidence bonus scale
-_CONFIDENCE_BONUS = 0.1
+_CONFIDENCE_BONUS = 0.10
 
 
 @dataclass
 class FusionResult:
     final_score: float
-    weights: dict[str, float]   # post-normalisation weights actually used
+    weights: dict[str, float]
     is_uncertain: bool
 
 
-def fuse(
-    model_scores: dict[str, float],
-    face_detected: bool,
-) -> FusionResult:
-    """
-    Confidence-weighted fusion of fake-probability scores.
-
-    `model_scores` maps model_name → fake_prob in [0, 1]. Missing models are
-    silently dropped — fusion re-normalises across whichever survived.
-    """
+def fuse(model_scores: dict[str, float], face_detected: bool) -> FusionResult:
     base = _BASE_WEIGHTS_FACE if face_detected else _BASE_WEIGHTS_NO_FACE
 
     adjusted: dict[str, float] = {}
     for name, score in model_scores.items():
-        if name not in base:
+        w = base.get(name, 0.0)
+        if w == 0.0:
             continue
-        bonus = abs(score - 0.5) * _CONFIDENCE_BONUS
-        adjusted[name] = base[name] + bonus
+        adjusted[name] = w + abs(score - 0.5) * _CONFIDENCE_BONUS
 
     total = sum(adjusted.values())
     if total <= 0 or not adjusted:
@@ -74,8 +60,4 @@ def fuse(
     final_score = sum(weights[name] * model_scores[name] for name in weights)
     is_uncertain = UNCERTAINTY_LOW <= final_score <= UNCERTAINTY_HIGH
 
-    return FusionResult(
-        final_score=float(final_score),
-        weights=weights,
-        is_uncertain=is_uncertain,
-    )
+    return FusionResult(final_score=float(final_score), weights=weights, is_uncertain=is_uncertain)

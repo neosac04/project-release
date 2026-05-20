@@ -11,19 +11,45 @@ class ModelVote(BaseModel):
     inference_time_ms: float
 
 
+class FFTMetrics(BaseModel):
+    low_freq: float
+    mid_freq: float
+    high_freq: float
+    spectral_irregularity: float
+    profile: list[float] = []
+
+
+class TextureMetrics(BaseModel):
+    sharpness: float
+    texture_uniformity: float
+    noise_level: float
+    compression_artifacts: float
+
+
+class SkinMetrics(BaseModel):
+    pore_detail: float
+    blotchiness: float
+    edge_blend: float
+
+
+class AnalysisMetrics(BaseModel):
+    fft: FFTMetrics
+    texture: TextureMetrics
+    symmetry_score: float | None = None
+    skin: SkinMetrics | None = None
+    top_attention_regions: list[str] = []
+    region_scores: dict[str, dict[str, float]] = {}
+
+
 class DetectionResponse(BaseModel):
     result_id: str
+    media_type: Literal["image"] = "image"
     final_score: float
     verdict: Literal["real", "fake"]
     face_detected: bool
     is_uncertain: bool
-
-    # Per-model fake probabilities + timings (keys: "efficientnet", "xceptionnet", "f3net",
-    # later "spectral_analyzer" for the masked Hive fallback)
     model_votes: dict[str, ModelVote]
-
-    # Normalised fusion weights actually applied this prediction
     fusion_weights: dict[str, float]
-
     explanations: list[str]
     total_inference_time_ms: float
+    analysis: AnalysisMetrics | None = None

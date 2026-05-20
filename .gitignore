@@ -1,13 +1,14 @@
-# Model weights (too large for git — run models/download_weights.py)
+# Model weights (too large for git — download separately)
+backend/app/models/weights/*.pth
+backend/app/models/weights/*.pt
+backend/app/models/weights/siglip/
+backend/app/models/mediapipe/
+# Legacy paths
 models/mediapipe/
 models/univfd/
 models/efficientnet/
 models/xception/
 models/dire/
-backend/app/models/*.pth
-backend/app/models/weights
-backend/app/models/weights/
-backend/app/models/mediapipe/
 
 # Local datasets
 images/

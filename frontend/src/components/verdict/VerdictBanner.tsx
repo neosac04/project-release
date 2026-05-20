@@ -1,18 +1,24 @@
-import { ShieldCheck, ShieldX, ShieldAlert, Clock, Camera, CameraOff } from 'lucide-react'
+import { ShieldCheck, ShieldX, ShieldAlert, Clock, Camera, CameraOff, Film } from 'lucide-react'
 import clsx from 'clsx'
 import type { Verdict } from '@/types/detection'
 
 interface VerdictBannerProps {
   verdict: Verdict
-  finalScore: number          // 0-1 fused fake probability
+  finalScore: number
   isUncertain: boolean
   faceDetected: boolean
   inferenceMs: number
+  // Video-specific (optional)
+  framesAnalyzed?: number
+  facesDetected?: number
+  temporalConsistency?: number
 }
 
 export function VerdictBanner({
   verdict, finalScore, isUncertain, faceDetected, inferenceMs,
+  framesAnalyzed, facesDetected, temporalConsistency,
 }: VerdictBannerProps) {
+  const isVideo = framesAnalyzed !== undefined
   const fakePercent = Math.round(finalScore * 100)
   const realPercent = 100 - fakePercent
   const displayPercent = verdict === 'fake' ? fakePercent : realPercent
@@ -21,7 +27,9 @@ export function VerdictBanner({
     ? {
         icon: ShieldAlert,
         label: 'UNCERTAIN',
-        sub: 'Low-confidence verdict — borderline case',
+        sub: isVideo
+          ? `Low-confidence video verdict — borderline case (${fakePercent}% fake across ${framesAnalyzed} frames)`
+          : 'Low-confidence verdict — borderline case',
         bg: 'bg-uncertain/10',
         border: 'border-uncertain/40',
         text: 'text-uncertain',
@@ -31,7 +39,9 @@ export function VerdictBanner({
     ? {
         icon: ShieldX,
         label: 'LIKELY DEEPFAKE',
-        sub: `This image is ${fakePercent}% likely to be a deepfake`,
+        sub: isVideo
+          ? `This video is ${fakePercent}% likely to be a deepfake (${framesAnalyzed} frames analysed)`
+          : `This image is ${fakePercent}% likely to be a deepfake`,
         bg: 'bg-fake/10',
         border: 'border-fake/40',
         text: 'text-fake',
@@ -40,7 +50,9 @@ export function VerdictBanner({
     : {
         icon: ShieldCheck,
         label: 'LIKELY AUTHENTIC',
-        sub: `This image is ${realPercent}% likely to be real`,
+        sub: isVideo
+          ? `This video is ${realPercent}% likely to be real (${framesAnalyzed} frames analysed)`
+          : `This image is ${realPercent}% likely to be real`,
         bg: 'bg-real/10',
         border: 'border-real/40',
         text: 'text-real',
@@ -94,10 +106,25 @@ export function VerdictBanner({
             )}>
               Final fused score: {fakePercent}% fake / {realPercent}% real
             </span>
-            <span className="rounded-full px-3 py-1 text-xs font-medium border bg-gray-800 text-gray-300 border-gray-700 flex items-center gap-1">
-              {faceDetected ? <Camera size={12} /> : <CameraOff size={12} />}
-              {faceDetected ? 'Face detected' : 'No face — full image used'}
-            </span>
+
+            {isVideo ? (
+              <>
+                <span className="rounded-full px-3 py-1 text-xs font-medium border bg-gray-800 text-gray-300 border-gray-700 flex items-center gap-1">
+                  <Film size={12} />
+                  {framesAnalyzed} frames · {facesDetected} with face
+                </span>
+                {temporalConsistency !== undefined && (
+                  <span className="rounded-full px-3 py-1 text-xs font-medium border bg-gray-800 text-gray-300 border-gray-700">
+                    Temporal σ={temporalConsistency.toFixed(3)}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="rounded-full px-3 py-1 text-xs font-medium border bg-gray-800 text-gray-300 border-gray-700 flex items-center gap-1">
+                {faceDetected ? <Camera size={12} /> : <CameraOff size={12} />}
+                {faceDetected ? 'Face detected' : 'No face — full image used'}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1 text-xs text-gray-500 justify-center md:justify-start">

@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - MODELS_DIR=/app/models
+      - DEVICE=cpu
+      - MAX_FILE_SIZE_MB=10
+      - CONFIDENCE_FAKE_THRESHOLD=0.65
+      - CONFIDENCE_REAL_THRESHOLD=0.35
+    healthcheck:
+      # Use /ready so Docker knows the backend is actually serving inference,
+      # not just that the process is alive.  /health is always-200 (liveness).
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 6          # up to 90 s for model loading on slow machines
+      start_period: 30s   # give uvicorn time to import torch before first probe
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Vite env vars must be baked at BUILD time — runtime env vars are ignored.
+        # In production override this build arg; in development the Vite dev
+        # server proxy (vite.config.ts) handles /api/ → localhost:8000.
+        - VITE_API_URL=/api/v1
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        # Frontend container only starts after the backend passes its readiness check.
+        condition: service_healthy

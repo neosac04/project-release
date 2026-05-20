@@ -1,0 +1,243 @@
+\chapter{Implementation}
+
+\begin{spacing}{1.5}
+This chapter covers the practical steps taken to build the deepfake detection system --- dataset construction, model fine-tuning, pipeline integration, and the frontend and backend. The implementation was done in Python 3.11 for the backend and TypeScript/React for the frontend, with training carried out on cloud GPU resources.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 4.1  Development Environment
+%------------------------------------------------------------------
+\section{Development Environment}
+
+\begin{spacing}{1.5}
+Local development was done on a MacBook (Apple M-series CPU, 16 GB RAM) running macOS 14. Because all three models run on CPU by default, this was sufficient for testing and debugging the inference pipeline. Model training, which is far more compute-intensive, was done on Kaggle Notebooks using a single NVIDIA T4 GPU (16 GB VRAM) with mixed-precision (AMP) enabled. The ViT backbone was served directly from the HuggingFace Hub and did not require a separate training run.
+
+Table \ref{tab:software} lists the key software dependencies used across the project.
+\end{spacing}
+
+\renewcommand{\arraystretch}{1.3}
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{|l|l|l|}
+  \hline
+  \textbf{Component} & \textbf{Tool / Library} & \textbf{Version} \\
+  \hline
+  Language (Backend)         & Python                        & 3.11      \\
+  ML Framework               & PyTorch                        & $\geq$2.0.0 \\
+  Web Framework              & FastAPI + Uvicorn              & 0.111.0 / 0.30.0 \\
+  Image Processing           & OpenCV                         & 4.9.0   \\
+  Face Detection             & MediaPipe                      & 0.10.14 \\
+  Pretrained Models          & HuggingFace Transformers       & Latest  \\
+  \hline
+  Language (Frontend)        & TypeScript / React             & 18.3.1  \\
+  Build Tool                 & Vite                           & 5.4.21  \\
+  State Management           & Zustand                        & 4.5.2   \\
+  HTTP Client                & Axios                          & 1.7.2   \\
+  CSS                        & Tailwind CSS                   & 3.x     \\
+  \hline
+  Version Control            & Git                            & Latest  \\
+  Training Environment       & Kaggle Notebooks (T4 GPU)      & ---     \\
+  \hline
+  \end{tabular}
+  \caption{Software Stack}
+  \label{tab:software}
+\end{table}
+
+%------------------------------------------------------------------
+% 4.2  Dataset Preparation
+%------------------------------------------------------------------
+\section{Dataset Preparation}
+
+\begin{spacing}{1.5}
+No single public dataset covers all the manipulation types the system needs to detect --- face-swaps, GAN portraits, Stable Diffusion images, and general AI-generated content each have different artefact signatures. To get reasonable coverage across these categories, a custom training set was assembled by combining three publicly available datasets.
+
+\begin{enumerate}
+  \item \textbf{140k Real and Fake Faces (Kaggle).} 140,000 images split evenly between real photographs and StyleGAN2-generated faces. This is the largest component of the dataset and covers GAN-specific texture and frequency artefacts well. Used to fine-tune the EfficientNet-B4 binary head.
+
+  \item \textbf{dima806/deepfake\_vs\_real\_image\_detection (HuggingFace).} Approximately 200,000 images spanning real photos and AI-generated content from multiple generators --- Stable Diffusion (v1.5, v2.0), DALL-E variants, Midjourney-style diffusion outputs, and various GAN architectures. This dataset was used to pre-train the ViT backbone that the project uses directly.
+
+  \item \textbf{FaceForensics++ via DeepfakeBench v1.0.1 (Kaggle).} Video-extracted face frames covering five face-swap manipulation methods: Deepfakes (FaceSwap), Face2Face, FaceShifter, NeuralTextures, and FSGAN. Used to fine-tune the F3Net binary head, which is specifically designed to detect facial manipulation artefacts.
+\end{enumerate}
+
+Each dataset was split 80/10/10 for train, validation, and test. Because the combined dataset was roughly balanced between real and fake classes, no oversampling was needed for EfficientNet or F3Net training. Images were resized to the required resolution for each model (224$\times$224 for ViT, 380$\times$380 for F3Net and EfficientNet) and normalised using ImageNet mean and standard deviation (mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]).
+
+Data augmentation during EfficientNet training was kept intentionally light --- random horizontal flips only --- to avoid introducing spatial artefacts that might confuse the texture-focused model. F3Net training used Mixup augmentation (alpha = 0.2) and label smoothing (0.05) to reduce overfitting given the higher complexity of the three-phase training procedure.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 4.3  Model Fine-Tuning and Calibration
+%------------------------------------------------------------------
+\section{Model Fine-Tuning and Calibration}
+
+%------------------------------------------------------------------
+\subsection{EfficientNet-B4}
+%------------------------------------------------------------------
+
+\begin{spacing}{1.5}
+The EfficientNet-B4 backbone was loaded with ImageNet-1K pretrained weights and the original 1000-class classifier head was replaced with a two-class linear layer (1792$\to$2). All backbone parameters were frozen; only the new head was trained. This keeps training fast and avoids destroying the low-level texture features learned during ImageNet pretraining, which transfer well to facial artefact detection.
+
+Training ran for 5 epochs on the 140k dataset with a batch size of 128 (using AMP to fit this on a 16 GB T4), an Adam optimiser at an initial learning rate of $1 \times 10^{-3}$, and a \textit{ReduceLROnPlateau} scheduler that halved the rate when validation accuracy stopped improving for two consecutive epochs. Final validation accuracy was approximately 82.4\%.
+\end{spacing}
+
+%------------------------------------------------------------------
+\subsection{F3Net}
+%------------------------------------------------------------------
+
+\begin{spacing}{1.5}
+F3Net is more sensitive to catastrophic forgetting than EfficientNet because its frequency-feature branches (FAD and LFS) encode domain-specific artefact patterns that are easily overwritten if the learning rate is too high. To deal with this, training used a three-phase progressive unfreezing strategy:
+
+\begin{itemize}
+  \item \textbf{Phase 1 (8 epochs):} Only the binary classification head is trainable. Learning rate: $1 \times 10^{-3}$. This quickly orients the head to the two-class output without touching the backbone.
+  \item \textbf{Phase 2 (12 epochs):} The top two SeparableConv blocks (conv3, conv4) are unfrozen alongside the head. Differential learning rates: $3 \times 10^{-4}$ for the head, $5 \times 10^{-5}$ for the backbone layers.
+  \item \textbf{Phase 3 (8 epochs):} Block12 (Xception exit flow) and the FAD learnable frequency filters are unfrozen. Very low rates --- $1 \times 10^{-4}$ for the head, $2 \times 10^{-5}$ for the top layers, $5 \times 10^{-6}$ for the deep layers --- to nudge rather than rewrite the frequency features.
+\end{itemize}
+
+All phases used OneCycleLR scheduling within each phase, gradient clipping at 1.0, Mixup augmentation, and label smoothing. Model checkpointing used AUC-ROC rather than accuracy, and test-time augmentation (horizontal flip ensemble) was applied at final evaluation. Total training: 28 epochs.
+\end{spacing}
+
+%------------------------------------------------------------------
+\subsection{Platt Scaling Calibration}
+%------------------------------------------------------------------
+
+\begin{spacing}{1.5}
+Raw softmax outputs from neural networks are not well-calibrated probabilities --- they tend to be overconfident. Since the fusion step depends on each model's fake probability being meaningful, a Platt scaling step was applied per model after training. This fits a logistic regression on the model's logits using a held-out calibration set, producing a sigmoid transformation that maps raw scores to reliable probabilities. Algorithm \ref{alg:platt} describes the procedure.
+\end{spacing}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{
+  \begin{itemize}
+    \itemsep0em
+    \item Trained model $M$
+    \item Calibration set $\mathcal{D}_{cal} = \{(x_i, y_i)\}$
+  \end{itemize}
+}
+\KwOut{Calibrated probability function $\hat{P}(y{=}1 \mid x)$}
+
+Collect raw logits: $z_i = M(x_i)$ for all $(x_i, y_i) \in \mathcal{D}_{cal}$\;
+Fit logistic regression on $(z_i, y_i)$: minimise $\mathcal{L}_{CE}$ w.r.t. parameters $(a, b)$\;
+\Return{$\hat{P}(y{=}1 \mid x) = \sigma(a \cdot M(x) + b)$}
+\caption{Platt Scaling Calibration}
+\label{alg:platt}
+\end{algorithm}
+
+%------------------------------------------------------------------
+% 4.4  Detection Pipeline
+%------------------------------------------------------------------
+\section{Detection Pipeline}
+
+\begin{spacing}{1.5}
+Once an image is received by the backend, it goes through a fixed sequence of steps before a verdict is returned. Algorithm \ref{alg:fusion} shows the full pipeline including face detection, model dispatch, and fusion.
+\end{spacing}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{
+  \begin{itemize}
+    \itemsep0em
+    \item Uploaded image $I$
+    \item Model set $\mathcal{M} = \{\text{ViT},\, \text{F3Net},\, \text{EfficientNet}\}$
+    \item Per-model fusion weights $w_i^{\text{face}},\, w_i^{\text{noface}}$
+    \item Verdict thresholds $\tau_{fake} = 0.62$, $\tau_{real} = 0.38$
+  \end{itemize}
+}
+\KwOut{Verdict $V \in \{\textit{Fake},\, \textit{Uncertain},\, \textit{Real}\}$, score $s$, heatmaps $H$}
+
+Convert $I$ to RGB; detect largest face using MediaPipe\;
+\eIf{face detected}{
+  $I_{eff} \leftarrow$ face crop;\quad
+  $w_i \leftarrow w_i^{\text{face}}$\;
+}{
+  $I_{eff} \leftarrow I$;\quad
+  $w_i \leftarrow w_i^{\text{noface}}$\;
+}
+\ForEach{model $m_i \in \mathcal{M}$}{
+  Preprocess $I$ (or $I_{eff}$ for EfficientNet) to model-specific resolution\;
+  Compute calibrated fake probability: $p_i \leftarrow \hat{P}_{m_i}(\text{fake} \mid I)$\;
+  Extract saliency map $h_i$ via GradCAM / attention weights\;
+}
+Compute fused score: $s = \sum_i w_i \cdot p_i$\;
+Compute ensemble heatmap: $H = \sum_i w_i \cdot h_i$\;
+\uIf{$s \geq \tau_{fake}$}{$V \leftarrow \textit{Fake}$}
+\uElseIf{$s \leq \tau_{real}$}{$V \leftarrow \textit{Real}$}
+\Else{$V \leftarrow \textit{Uncertain}$}
+\Return{$V$, $s$, $H$, per-model explanations}
+\caption{Multi-Model Deepfake Detection and Fusion}
+\label{alg:fusion}
+\end{algorithm}
+
+\begin{spacing}{1.5}
+Saliency maps for EfficientNet are generated using GradCAM++, which applies second-order gradient weighting to reduce noise in the activation maps compared to standard GradCAM. The procedure is shown in Algorithm \ref{alg:gradcam}. For the ViT, attention weights from the final transformer layer's CLS-to-patch connections serve as the saliency map directly. For F3Net, standard GradCAM is applied at the frequency-spatial fusion point.
+\end{spacing}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{
+  \begin{itemize}
+    \itemsep0em
+    \item Input image tensor $x$
+    \item Target class $c$ (fake, index 1)
+    \item Final convolutional layer $\ell$ with activations $A^k$ (channel $k$)
+  \end{itemize}
+}
+\KwOut{Normalised heatmap $\mathcal{H}$}
+
+Forward pass: compute $y^c = f_c(x)$; record activations $A^k$\;
+Backward pass: compute gradients $\frac{\partial y^c}{\partial A^k}$\;
+Compute second-order gradient weights:
+  $\alpha_k = \dfrac{\left(\frac{\partial y^c}{\partial A^k}\right)^2}{2\left(\frac{\partial y^c}{\partial A^k}\right)^2 + \sum_{a,b} A^k_{ab} \left(\frac{\partial y^c}{\partial A^k}\right)^3}$\;
+Compute importance weights: $w_k = \sum_{a,b} \alpha_k \cdot \mathrm{ReLU}\!\left(\frac{\partial y^c}{\partial A^k}\right)$\;
+Generate CAM: $\mathcal{H}' = \mathrm{ReLU}\!\left(\sum_k w_k A^k\right)$\;
+Normalise: $\mathcal{H} = \dfrac{\mathcal{H}' - \min(\mathcal{H}')}{\max(\mathcal{H}') - \min(\mathcal{H}') + \varepsilon}$\;
+\Return{$\mathcal{H}$}
+\caption{GradCAM++ Saliency Map Extraction}
+\label{alg:gradcam}
+\end{algorithm}
+
+%------------------------------------------------------------------
+% 4.5  Backend Implementation
+%------------------------------------------------------------------
+\section{Backend Implementation}
+
+\begin{spacing}{1.5}
+The FastAPI backend is structured into separate modules for API routing, model management, preprocessing, and storage. All three models are loaded at application startup and kept in memory through a singleton \texttt{ModelRegistry}. Loading order is EfficientNet ($\approx$90 MB, local \texttt{.pth} file), F3Net ($\approx$110 MB, local \texttt{.pth} file), and ViT ($\approx$350 MB, downloaded or cached from HuggingFace Hub). Cold-start time is 15--30 seconds; after that, each request pays only the cost of inference.
+
+The \texttt{/api/v1/detect} endpoint accepts a multipart image upload, runs the full detection pipeline asynchronously, and returns a JSON object containing the verdict, per-model probabilities, fusion weights, inference times, and a result ID. The result ID is used by a second endpoint, \texttt{/api/v1/results/\{id\}/heatmap/\{model\}}, which renders and streams the GradCAM overlay as a PNG. Individual model heatmaps (ViT, F3Net, EfficientNet) and the weighted ensemble heatmap are all available through this endpoint. Results are cached in memory for the session duration to avoid re-running inference if the user switches between heatmap views.
+
+Face detection is handled by MediaPipe's face mesh model, which identifies 468 facial landmarks and returns a tight bounding box around the largest detected face. The crop is passed to EfficientNet; the full image is always passed to ViT and F3Net regardless of face detection outcome. If no face is found, the EfficientNet fusion weight drops from 0.15 to 0.05, and ViT's weight increases from 0.50 to 0.55, reflecting the reduced reliability of texture-based analysis on non-face images.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 4.6  Frontend Implementation
+%------------------------------------------------------------------
+\section{Frontend Implementation}
+
+\begin{spacing}{1.5}
+The React frontend is a single-page application with two main routes: the upload page and the results page. Zustand is used for global state --- once the backend returns a detection result, the full JSON is stored in the Zustand store and the router navigates automatically to the results view. This avoids prop-drilling through deeply nested components and means the results page can be refreshed without losing state for the session.
+
+The upload page renders a drag-and-drop zone that shows a file preview before submission. On submit, an Axios POST is sent to \texttt{/api/v1/detect} and a loading spinner is shown. The results page renders four main components: a verdict banner with a colour-coded confidence ring (green for Real, red for Fake, amber for Uncertain), a per-model vote table, a heatmap viewer with a toggle for each model and an opacity slider, and an explanations card that lists plain-language findings from each detector.
+
+The Vite dev server proxies all \texttt{/api} requests to the FastAPI backend at \texttt{localhost:8000}, so the frontend does not need to know the backend URL explicitly. In production, a reverse proxy (nginx or similar) would serve the same purpose.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 4.7  Video Detection
+%------------------------------------------------------------------
+\section{Video Detection}
+
+\begin{spacing}{1.5}
+The system supports video input through an extension of the image pipeline. Rather than processing every frame --- which would be computationally impractical for even a short clip --- keyframes are extracted at one-second intervals using scene-change detection. This alone reduces the number of frames to process by roughly 90\% compared to a naive frame-by-frame approach.
+
+Each keyframe is treated as an independent image and passed through the full three-model ensemble pipeline described in Section 4.4. The resulting per-frame fake probabilities are then analysed for temporal consistency. Abrupt shifts between high and low fake-probability frames are a strong indicator of splice or face-swap artefacts, since authentic footage tends to produce smoothly varying scores. A final video-level verdict is derived by weighted majority voting across keyframe verdicts, where each vote is weighted by the confidence of that frame's fused score.
+
+The video path shares all preprocessing, model inference, and heatmap generation code with the image path. The only video-specific additions are the keyframe extraction step and the temporal aggregation at the end, both of which are handled as a thin wrapper around the existing image pipeline.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 4.8  Summary
+%------------------------------------------------------------------
+\section{Summary}
+
+\begin{spacing}{1.5}
+This chapter described how the deepfake detection system was built. The training dataset was assembled from three sources covering GAN-generated faces, diffusion-model images, and face-swap video frames. EfficientNet-B4 was fine-tuned with a head-only strategy in 5 epochs; F3Net used a three-phase progressive unfreezing approach over 28 epochs. Platt scaling was applied to calibrate each model's probability outputs. The backend exposes a clean REST API backed by a singleton model registry, and the React frontend presents results through an interactive heatmap viewer. Video detection reuses the image pipeline with keyframe sampling and temporal consistency checking added on top.
+\end{spacing}

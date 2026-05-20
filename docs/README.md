@@ -1,25 +1,20 @@
 # Deepfake Detector
 
-Advanced multi-model deepfake and AI-generated image detection with explainability heatmaps,
-anatomical analysis, frequency forensics, and camera fingerprint (PRNU) verification.
+Multi-model deepfake and AI-generated image/video detection with explainability heatmaps,
+facial landmark analysis, frequency forensics, and skin quality scoring.
 
 ## Quick Start
 
-### 1 — Download model weights
+### Run with Docker Compose
 ```bash
-cd deepfake-detector
-python models/download_weights.py
-```
-
-### 2 — Run with Docker Compose
-```bash
+cd release
 docker compose up --build
 ```
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - API docs: http://localhost:8000/docs
 
-### 3 — Or run locally (development)
+### Run locally (development)
 
 **Backend**
 ```bash
@@ -39,26 +34,28 @@ npm run dev       # runs on http://localhost:3000
 
 ## Models
 
-| Model | Specialty | Source |
-|---|---|---|
-| **UnivFD** (CLIP ViT-L/14) | Universal — GAN, diffusion, all types | WisconsinAIVision/UniversalFakeDetect |
-| **EfficientNet-B4** | Face forgeries (FF++ trained) | SCLBD/DeepfakeBench v1.0.1 |
-| **Xception** | Texture artifacts (original FF++ baseline) | SCLBD/DeepfakeBench v1.0.1 |
-| **DistilDIRE** | Diffusion-generated images | miraflow/DistilDIRE |
+| Model | Specialty | Source | Weight |
+|---|---|---|---|
+| **ViT** (dima806) | Full-image synthesis detection — AUC 0.999 | HuggingFace hub (auto-download) | 30% |
+| **SigLIP** (fine-tuned) | Vision-language face classification — 94.44% accuracy | `app/models/weights/siglip/` | 25% |
+| **F3Net** | Frequency-domain DCT deepfake detection — AUC 0.958 | `app/models/weights/f3net_binary_best.pth` | 20% |
+| **EfficientNet-B4** | Facial texture micro-artifact CNN — AUC 0.764 | `app/models/weights/efficientnet_binary.pth` | 10% |
+| **Hive AI API** | External AI-image detection oracle | API key via `EXT_API_KEY` | 15% |
+| **XceptionNet** *(optional)* | Localised manipulation artifacts | `app/models/weights/xception_best.pth` | — |
 
-Ensemble weights shift dynamically based on the detected forgery type.
+Models that have no weight file are silently skipped at startup. ViT auto-downloads on first run.
+Fusion weights are re-normalised across loaded models only.
 
 ---
 
-## Novel Features
+## Hive API Setup
 
-- **Adaptive ensemble**: weights reallocate when diffusion/GAN/face-swap is suspected
-- **Eye reflection symmetry**: specular highlights must mirror between eyes (fails in GANs)
-- **Iris circularity**: GAN irises deviate from perfect circles (MediaPipe iris landmarks)
-- **Jaw boundary seam detection**: Laplacian gradient discontinuity along face oval
-- **PRNU camera fingerprint**: positive authenticity signal — real cameras leave a unique noise signature
-- **Model disagreement indicator**: high variance between models surfaces as first-class uncertainty
-- **PCA feature space plot**: shows where your image falls among known fake/real clusters
+The Hive AI detector is enabled when `EXT_API_KEY` is set. Add to `backend/.env`:
+
+```bash
+EXT_API_URL=https://api.thehive.ai/api/v2/task/sync
+EXT_API_KEY=your_hive_api_key
+```
 
 ---
 
@@ -67,36 +64,40 @@ Ensemble weights shift dynamically based on the detected forgery type.
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/v1/detect` | Upload image, run full pipeline |
-| GET | `/api/v1/heatmap/{result_id}/{model}` | PNG heatmap overlay (ensemble/univfd/efficientnet/freqnet) |
-| GET | `/api/v1/result/{result_id}` | Retrieve cached result |
+| POST | `/api/v1/detect/video` | Upload video, run frame-based detection |
+| GET | `/api/v1/heatmap/{result_id}/{model}` | PNG heatmap overlay (`ensemble`/`vit`/`siglip`/`f3net`/`efficientnet`) |
+| GET | `/api/v1/result/{result_id}` | Retrieve cached image result |
+| GET | `/api/v1/video/result/{result_id}` | Retrieve cached video result |
 | GET | `/api/v1/models/status` | Which models are loaded |
 | GET | `/api/v1/health` | Liveness probe |
+| GET | `/api/v1/ready` | Readiness probe (reports model + asset status) |
 
 ---
 
 ## Without GPU
 
-All models run on CPU. Inference takes ~5-15 seconds depending on hardware.
-Set `DEVICE=cuda` in `.env` if a GPU is available for ~5× speedup.
+All models run on CPU. Inference takes ~5–20 seconds depending on hardware.
+Set `DEVICE=cuda` in `.env` if a GPU is available.
 
 ---
 
 ## Project Structure
 
 ```
-deepfake-detector/
-├── models/               ← pretrained weights (download_weights.py)
+release/
 ├── backend/
 │   └── app/
-│       ├── models/       ← UnivFD, EfficientNet, FreqNet, DIRE wrappers
-│       ├── analysis/     ← facial, frequency, PRNU, color, compression
-│       ├── core/         ← pipeline, ensemble, fake_type_classifier
-│       ├── explainability/← GradCAM++, attention rollout, overlay
-│       └── api/          ← FastAPI endpoints
+│       ├── models/weights/   ← .pth weight files + siglip/ directory
+│       ├── models/mediapipe/ ← face_landmarker.task
+│       ├── models/           ← detector classes (efficientnet, vit, siglip, f3net, hive)
+│       ├── analysis/         ← FFT, texture, face symmetry, skin quality
+│       ├── core/             ← pipeline, fusion engine
+│       ├── explainability/   ← GradCAM, overlay
+│       ├── video/            ← frame extractor, temporal aggregator
+│       └── api/endpoints/    ← detect, video_detection, visualization, health
 └── frontend/
     └── src/
-        ├── components/   ← all UI panels
-        ├── pages/        ← UploadPage, ResultsPage
-        └── store/        ← Zustand state
+        ├── components/       ← VerdictBanner, ModelVoteTable, HeatmapViewer, FrameTimeline
+        ├── pages/            ← UploadPage, ResultsPage
+        └── store/            ← Zustand detection state
 ```
-# jazz

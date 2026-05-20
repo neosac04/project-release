@@ -10,10 +10,11 @@ interface HeatmapModel {
 }
 
 const MODELS: HeatmapModel[] = [
-  { key: 'ensemble',     label: 'Ensemble',        caption: 'Weighted average of all model heatmaps' },
-  { key: 'vit',          label: 'ViT',             caption: 'Attention map from the global image transformer' },
-  { key: 'f3net',        label: 'F3Net',           caption: 'GradCAM on the frequency-domain features' },
-  { key: 'efficientnet', label: 'EfficientNet',    caption: 'GradCAM++ on facial texture features' },
+  { key: 'ensemble',     label: 'Ensemble',        caption: 'Weighted blend of ViT, SigLIP and EfficientNet heatmaps' },
+  { key: 'vit',          label: 'ViT',             caption: 'CLS-token attention map from the global image transformer' },
+  { key: 'siglip',       label: 'SigLIP',          caption: 'Gradient × input saliency from the vision-language face classifier' },
+  { key: 'f3net',        label: 'F3Net',           caption: 'GradCAM on the frequency-domain DCT features' },
+  { key: 'efficientnet', label: 'EfficientNet',    caption: 'GradCAM++ on facial micro-texture features' },
 ]
 
 interface HeatmapViewerProps {

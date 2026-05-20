@@ -12,7 +12,7 @@ except Exception:
     cv2 = None
 
 
-def _to_rgb(image: np.ndarray) -> np.ndarray:
+def _to_rgb(image: np.ndarray, bgr_input: bool = False) -> np.ndarray:
     if image is None or not isinstance(image, np.ndarray) or image.size == 0:
         raise ValueError("Invalid image input")
     if cv2 is None:
@@ -20,7 +20,9 @@ def _to_rgb(image: np.ndarray) -> np.ndarray:
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
     if image.ndim == 3 and image.shape[2] >= 3:
-        return cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2RGB)
+        if bgr_input:
+            return cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2RGB)
+        return image[:, :, :3].copy()  # already RGB (PIL-derived)
     raise ValueError(f"Unsupported image shape: {image.shape}")
 
 
@@ -94,9 +96,9 @@ def _haar_boxes(rgb_image: np.ndarray) -> list[list[float]]:
     return [[float(x), float(y), float(x + w), float(y + h)] for x, y, w, h in detections]
 
 
-def detect_largest_face(image: np.ndarray) -> Optional[np.ndarray]:
+def detect_largest_face(image: np.ndarray, bgr_input: bool = False) -> Optional[np.ndarray]:
     try:
-        rgb = _to_rgb(image)
+        rgb = _to_rgb(image, bgr_input=bgr_input)
     except Exception:
         return None
 
@@ -135,7 +137,7 @@ def test_face_detection(image_path: str):
         print("No face detected")
         return None
 
-    face = detect_largest_face(image)
+    face = detect_largest_face(image, bgr_input=True)
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
     if face is None:

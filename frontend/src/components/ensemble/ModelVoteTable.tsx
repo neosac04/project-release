@@ -10,6 +10,16 @@ const MODEL_LABELS: Record<string, string> = {
   f3net:        'F3Net (Frequency)',
   efficientnet: 'EfficientNet (Face)',
   xceptionnet:  'XceptionNet',
+  siglip:       'SigLIP (Vision-Language)',
+}
+
+// Shorter labels used on the bar chart where space is limited
+const MODEL_CHART_LABELS: Record<string, string> = {
+  vit:          'ViT',
+  f3net:        'F3Net',
+  efficientnet: 'EffNet',
+  xceptionnet:  'Xcept',
+  siglip:       'SigLIP',
 }
 
 const MODEL_DESCRIPTIONS: Record<string, string> = {
@@ -17,6 +27,7 @@ const MODEL_DESCRIPTIONS: Record<string, string> = {
   f3net:        'Decomposes the image into 4 frequency bands via DCT — catches GAN/diffusion artifacts',
   efficientnet: 'Convolutional net on the face crop — detects micro-texture inconsistencies',
   xceptionnet:  'Localised manipulation artifact detector',
+  siglip:       'Fine-tuned SigLIP classifier (94.44% accuracy) — vision-language features on the face crop',
 }
 
 interface ModelVoteTableProps {
@@ -31,22 +42,29 @@ export function ModelVoteTable({ votes, weights }: ModelVoteTableProps) {
   )
 
   const chartData = entries.map(([name, v]) => ({
-    name: MODEL_LABELS[name] ?? name,
+    name: MODEL_CHART_LABELS[name] ?? name,
     fake: Math.round(v.fake_prob * 100),
   }))
 
   return (
     <Card title="Individual Model Predictions">
       <p className="text-xs text-gray-500 mb-4">
-        Three specialists vote independently. Each one looks for different evidence.
-        The verdict is a weighted blend (weights below).
+        Four specialists vote independently. Each one looks for different evidence.
+        The verdict is a confidence-weighted blend (weights below).
       </p>
 
       {/* Bar chart */}
-      <div className="h-40 mb-6">
+      <div className="h-48 mb-6">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-            <XAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 10 }} interval={0} />
+          <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 32 }}>
+            <XAxis
+              dataKey="name"
+              tick={{ fill: '#9ca3af', fontSize: 11 }}
+              interval={0}
+              angle={-25}
+              textAnchor="end"
+              height={48}
+            />
             <YAxis tick={{ fill: '#9ca3af', fontSize: 10 }} domain={[0, 100]} unit="%" />
             <Tooltip
               contentStyle={{ background: '#111827', border: '1px solid #374151', borderRadius: 8 }}

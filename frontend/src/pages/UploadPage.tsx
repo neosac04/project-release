@@ -37,7 +37,7 @@ export function UploadPage() {
               Detect Deepfakes & AI-Generated Media
             </h2>
             <p className="text-gray-500 max-w-lg mx-auto">
-              Five deep-learning specialists — ViT, SigLIP, F3Net, EfficientNet and Hive AI —
+              Four deep-learning specialists — ViT, SigLIP, F3Net and EfficientNet —
               vote on your image or video and explain their reasoning.
             </p>
           </div>
@@ -49,7 +49,6 @@ export function UploadPage() {
               { label: 'SigLIP',       desc: 'Vision-language · 94% acc' },
               { label: 'F3Net',        desc: 'DCT frequency artifacts' },
               { label: 'EfficientNet', desc: 'Face texture forensics' },
-              { label: 'Hive AI',      desc: 'External API · 99% AUC' },
             ].map((m) => (
               <div key={m.label} className="bg-gray-900 border border-gray-800 rounded-full px-3 py-1.5 text-xs">
                 <span className="text-gray-300 font-medium">{m.label}</span>
@@ -130,7 +129,7 @@ export function UploadPage() {
           {status === 'idle' && !selectedFile && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
               {[
-                { icon: '🎯', title: 'Final fused verdict', desc: 'Confidence-weighted ensemble of 5 specialists' },
+                { icon: '🎯', title: 'Final fused verdict', desc: 'Confidence-weighted ensemble of 4 specialists' },
                 { icon: '🗳️', title: 'Per-model breakdown', desc: 'See exactly how each model voted' },
                 { icon: '🔥', title: 'GradCAM heatmaps', desc: 'Visual evidence — see which regions flagged it' },
                 { icon: '🎬', title: 'Video frame timeline', desc: 'Frame-by-frame score chart for video deepfakes' },

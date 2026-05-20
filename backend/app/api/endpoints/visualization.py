@@ -17,8 +17,8 @@ from app.storage.result_cache import ResultCache
 router = APIRouter()
 
 # Which models run on the face crop vs the full image (mirrors pipeline.py)
-_FULL_IMAGE_MODELS = {"f3net", "vit"}
-_VALID_MODELS = {"efficientnet", "xceptionnet", "f3net", "vit", "ensemble"}
+_FULL_IMAGE_MODELS = {"f3net", "vit", "hive"}
+_VALID_MODELS = {"efficientnet", "xceptionnet", "f3net", "vit", "siglip", "ensemble"}
 
 
 @router.get("/heatmap/{result_id}/{model_name}")
@@ -48,12 +48,11 @@ async def get_heatmap(result_id: str, model_name: str):
     registry = ModelRegistry.get_instance()
 
     if model_name == "ensemble":
-        # Same weighting as the fusion engine, simplified to a fixed mix
-        # Mirrors fusion.py base weights (ViT dominates, EfficientNet supports).
+        # Mirrors fusion.py base weights — ViT global, SigLIP face, EfficientNet texture.
         ensemble_weights = (
-            {"vit": 0.70, "efficientnet": 0.30}
+            {"vit": 0.50, "siglip": 0.30, "efficientnet": 0.20}
             if result.face_detected
-            else {"vit": 0.80, "efficientnet": 0.20}
+            else {"vit": 0.70, "siglip": 0.30}
         )
         heatmaps: list[np.ndarray] = []
         weights: list[float] = []

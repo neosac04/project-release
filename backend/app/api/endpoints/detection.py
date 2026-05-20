@@ -39,7 +39,12 @@ async def detect(file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail="Cannot decode image file.")
 
     pipeline = get_pipeline()
-    result = await pipeline.run(image)
+    try:
+        result = await pipeline.run(image)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Detection failed: {exc!s}")
 
     ResultCache.get_instance().set(result.result_id, result, image_bytes=data)
     return result

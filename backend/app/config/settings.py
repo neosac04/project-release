@@ -31,8 +31,11 @@ MODEL_PATHS = {
         "SIGLIP_MODEL_PATH",
         "app/models/weights/siglip",
     ),
-    # Hive API — key injected at runtime via ext_api_key setting.
-    "hive": "hive_api_key_placeholder",
+    # Hive API — URL can be overridden via EXT_API_URL.
+    "hive": _env_path(
+        "EXT_API_URL",
+        "https://api.thehive.ai/api/v2/task/sync",
+    ),
 }
 
 
@@ -56,8 +59,9 @@ class Settings(BaseSettings):
     max_video_size_mb: int = 100
 
     # External API (Hive) — activates Hive model when ext_api_key is set.
-    ext_api_url: str = ""
-    ext_api_key: str = ""
+    ext_api_url: str = "https://api.thehive.ai/api/v2/task/sync"
+    ext_api_key: str = "nOzl9hL/htppcOg/HCcV4A==" \
+    ""
 
 
 settings = Settings()

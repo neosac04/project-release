@@ -13,20 +13,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 _BASE_WEIGHTS_FACE = {
-    "vit":          0.35,
+    "vit":          0.30,
     "siglip":       0.25,
     "f3net":        0.20,
-    "efficientnet": 0.15,
-    "hive":         0.05,
+    "efficientnet": 0.10,
+    "hive":         0.15,
     "xceptionnet":  0.00,
 }
 
 _BASE_WEIGHTS_NO_FACE = {
-    "vit":          0.35,
-    "siglip":       0.25,
+    "vit":          0.30,
+    "siglip":       0.20,
     "f3net":        0.25,
     "efficientnet": 0.10,
-    "hive":         0.05,
+    "hive":         0.15,
     "xceptionnet":  0.00,
 }
 

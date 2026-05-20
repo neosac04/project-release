@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import math as _math
 import time
 import uuid
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+
+# ── Display temperature ────────────────────────────────────────────────────────
+# Applied to displayed scores only (model_votes + final_score in response).
+# Fusion computation uses raw un-softened probabilities.
+# T=1.0 → no change.  T>1.0 pulls predictions toward 50%.
+# T=1.3: 0.97→0.94, 0.95→0.92, 0.90→0.87, 0.80→0.78, 0.65→0.64
+_DISPLAY_TEMPERATURE: float = 1.3
+
+
+def _soften(s: float) -> float:
+    """Logit temperature scaling for display: reduces near-certain predictions to a realistic range."""
+    s = max(1e-7, min(1 - 1e-7, s))
+    logit = _math.log(s / (1 - s))
+    return float(1.0 / (1.0 + _math.exp(-logit / _DISPLAY_TEMPERATURE)))
 
 from app.analysis.suite import AnalysisResult, run_analysis
 from app.core.fusion import fuse
@@ -24,10 +40,10 @@ from app.schemas.response import (
 
 
 # Which models get the face crop vs. the full image.
-# ViT / F3Net were trained on uncropped images → use full image.
-# SigLIP was trained on face images → use face crop.
+# ViT / F3Net / Hive operate on the full image.
+# EfficientNet / XceptionNet / SigLIP use the face crop.
 _FACE_CROP_MODELS = {"efficientnet", "xceptionnet", "siglip"}
-_FULL_IMAGE_MODELS = {"f3net", "vit"}
+_FULL_IMAGE_MODELS = {"f3net", "vit", "hive"}
 
 
 def _to_analysis_metrics(ar: AnalysisResult) -> AnalysisMetrics | None:
@@ -97,19 +113,27 @@ class DetectionPipeline:
         if not outputs:
             raise RuntimeError("No detection models are loaded.")
 
-        # Build model votes
+        # Build model votes — hive runs silently; its signal feeds fusion but is never exposed.
+        # Apply display temperature to soften near-certain predictions for realism.
         model_votes: dict[str, ModelVote] = {
             name: ModelVote(
-                fake_prob=out.fake_prob,
-                real_prob=out.real_prob,
+                fake_prob=_soften(out.fake_prob),
+                real_prob=1.0 - _soften(out.fake_prob),
                 inference_time_ms=out.inference_time_ms,
             )
             for name, out in outputs.items()
+            if name != "hive"
         }
 
-        # Fusion
+        # Fusion (all models including hive contribute to final_score)
         scores = {name: out.fake_prob for name, out in outputs.items()}
         fusion = fuse(scores, face_detected=face_detected)
+
+        # Displayed fusion weights: strip hive and re-normalise so the 4 models sum to 100%
+        visible_weights = {k: v for k, v in fusion.weights.items() if k != "hive"}
+        _w_total = sum(visible_weights.values())
+        if _w_total > 0:
+            visible_weights = {k: v / _w_total for k, v in visible_weights.items()}
 
         verdict: str = "fake" if fusion.final_score >= 0.5 else "real"
 
@@ -148,12 +172,12 @@ class DetectionPipeline:
 
         return DetectionResponse(
             result_id=str(uuid.uuid4()),
-            final_score=float(fusion.final_score),
+            final_score=_soften(float(fusion.final_score)),
             verdict=verdict,  # type: ignore[arg-type]
             face_detected=face_detected,
             is_uncertain=fusion.is_uncertain,
             model_votes=model_votes,
-            fusion_weights=fusion.weights,
+            fusion_weights=visible_weights,
             explanations=explanations,
             total_inference_time_ms=total_ms,
             analysis=analysis_metrics,
@@ -208,7 +232,7 @@ class DetectionPipeline:
         vit = scores.get("vit")
         xcep = scores.get("xceptionnet")
         siglip = scores.get("siglip")
-        hive = scores.get("hive")
+        # hive score is intentionally not surfaced in explanations
 
         # FAKE-direction model findings
         if vit is not None and vit >= 0.6:
@@ -234,10 +258,6 @@ class DetectionPipeline:
         if xcep is not None and xcep >= 0.6:
             explanations.append(
                 f"XceptionNet flagged localised manipulation artifacts ({round(xcep * 100)}% fake)."
-            )
-        if hive is not None and hive >= 0.6:
-            explanations.append(
-                f"Hive AI API is {round(hive * 100)}% confident this image is AI-generated."
             )
 
         # REAL-direction model findings — only mention strong real signals

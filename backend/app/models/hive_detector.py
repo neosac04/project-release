@@ -16,9 +16,10 @@ import time
 
 import numpy as np
 
+from app.config.settings import settings
 from app.models.base import BaseDetector, ModelOutput
 
-_HIVE_ENDPOINT = "https://api.thehive.ai/api/v2/task/sync"
+_DEFAULT_HIVE_ENDPOINT = "https://api.thehive.ai/api/v2/task/sync"
 
 _FAKE_CLASSES = {
     "yes_ai_generated",
@@ -58,8 +59,9 @@ class HiveDetector(BaseDetector):
 
         fake_prob = 0.5
         try:
+            hive_endpoint = settings.ext_api_url or _DEFAULT_HIVE_ENDPOINT
             resp = requests.post(
-                _HIVE_ENDPOINT,
+                hive_endpoint,
                 headers={"Authorization": f"Token {self._api_key}"},
                 files={"media": ("image.jpg", buf, "image/jpeg")},
                 timeout=20,

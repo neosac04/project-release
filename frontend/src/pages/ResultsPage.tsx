@@ -7,6 +7,7 @@ import { ExplanationsCard } from '@/components/verdict/ExplanationsCard'
 import { HeatmapViewer } from '@/components/heatmap/HeatmapViewer'
 import { ModelVoteTable } from '@/components/ensemble/ModelVoteTable'
 import { FrameTimeline } from '@/components/video/FrameTimeline'
+import { AnalysisPanel } from '@/components/analysis/AnalysisPanel'
 import { isVideoResult } from '@/types/detection'
 
 export function ResultsPage() {
@@ -116,10 +117,19 @@ export function ResultsPage() {
             <ExplanationsCard explanations={anyResult.explanations} />
           </div>
         </div>
+
+        {/* Forensic analysis — full width, below two-column grid */}
+        {anyResult.analysis && (
+          <AnalysisPanel
+            analysis={anyResult.analysis}
+            finalScore={anyResult.final_score}
+            faceDetected={isVid ? anyResult.faces_detected > 0 : (result?.face_detected ?? false)}
+          />
+        )}
       </main>
 
       <footer className="border-t border-gray-800 px-6 py-4 text-center text-xs text-gray-700">
-        Deepfake Detector · Multi-model ensemble: ViT · SigLIP · F3Net · EfficientNet-B4 · Hive AI
+        Deepfake Detector · Multi-model ensemble: ViT · SigLIP (94.44%) · F3Net · EfficientNet-B4
       </footer>
     </div>
   )

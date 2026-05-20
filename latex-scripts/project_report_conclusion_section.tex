@@ -1,0 +1,99 @@
+\chapter{Conclusion and Future Scope}
+
+%------------------------------------------------------------------
+% 6.1  Conclusion
+%------------------------------------------------------------------
+\section{Conclusion}
+
+\begin{spacing}{1.5}
+This project set out to build a practical deepfake detection system that could handle real-world inputs without requiring specialised hardware or domain expertise from the end user. The result is a three-model ensemble --- a Vision Transformer, F3Net, and EfficientNet-B4 --- deployed behind a FastAPI backend with a React frontend, producing a verdict, per-model confidence scores, and GradCAM-based heatmaps for every uploaded image.
+
+The system works. On a 1000-image held-out test set it achieves 90.5\% accuracy and an AUC of 0.975, with recall of 0.920 on the Fake class. The heatmaps give users a reason for the decision rather than a bare verdict, which matters in applications where a human reviewer needs to make a final call. The pipeline runs on CPU in under two seconds, so deployment does not require GPU infrastructure.
+
+That said, some things did not go as well as hoped. EfficientNet-B4's individual accuracy of 82.4\% is lower than the other two models, largely because its training set (the 140k StyleGAN dataset) was not diverse enough to generalise across all manipulation types. The datasets we wanted to train and benchmark on --- CelebDF-v2 and FaceForensics++ --- were not accessible within the project timeline due to institutional access requirements. The video detection pipeline is implemented and functional, but it was not formally evaluated on a labelled video benchmark. These are real limitations and they affect how much confidence should be placed in the results in production settings.
+
+Overall, the project demonstrates that ensemble-based deepfake detection with interpretable outputs is achievable at a student project scale, and the architecture is solid enough to serve as a foundation for further work.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 6.2  Sustainable Developmental Goals
+%------------------------------------------------------------------
+\section{Sustainable Development Goals}
+
+\begin{spacing}{1.5}
+Deepfake detection sits at the intersection of AI safety, digital rights, and public trust in information systems. The project directly supports two of the UN's 17 Sustainable Development Goals: \textbf{SDG 16} (Peace, Justice and Strong Institutions) and \textbf{SDG 10} (Reduced Inequalities). It also has a secondary connection to \textbf{SDG 9} (Industry, Innovation and Infrastructure) through its contribution to responsible AI tooling.
+
+The primary stakeholders this system is designed to help include journalists and fact-checkers who need to verify media authenticity under deadline pressure; digital banking and KYC (Know Your Customer) verification systems that are increasingly targeted by face-swap attacks; social media moderation teams dealing with viral misinformation; law enforcement agencies investigating identity fraud and non-consensual intimate imagery; and individual users who want to verify whether an image they have received is authentic.
+\end{spacing}
+
+\subsection{Contextual Analysis}
+
+\begin{spacing}{1.5}
+The rapid democratisation of generative AI tools has made synthetic media trivially easy to produce. Applications that once required professional equipment and editing expertise now run on consumer hardware in minutes. This has created a measurable problem: deepfakes are being used to spread political disinformation before elections, commit identity fraud in digital financial systems, and produce non-consensual intimate imagery that disproportionately targets women. In India specifically, several high-profile deepfake incidents involving public figures and politicians were reported between 2023 and 2025, and the Reserve Bank of India has flagged AI-assisted KYC fraud as a growing threat to digital banking.
+
+The social harm from these uses is asymmetric: the people most likely to be targeted are those with the least institutional recourse. Building accessible detection tools that do not require technical expertise to use is therefore not just an engineering problem but a matter of digital equity.
+\end{spacing}
+
+\subsection{Methodology and Design}
+
+\begin{spacing}{1.5}
+The system was designed with accessibility and interpretability as primary constraints alongside detection accuracy. Rather than a single large model that requires GPU infrastructure to run, the ensemble was structured so that the three models cover different artefact types --- spatial, frequency-domain, and textural --- and can be swapped or retrained independently. This modular design means the system can be updated as new manipulation methods emerge without rebuilding from scratch.
+
+Running on CPU by default means the backend can be hosted on standard cloud instances without GPU costs, lowering the barrier for deployment by smaller organisations such as regional newsrooms or civil society groups. The open-source codebase and the documented training scripts make it straightforward for other teams to retrain on newer or domain-specific datasets.
+
+All training was done using publicly available cloud compute (Kaggle's free GPU tier). F3Net and EfficientNet-B4 were trained with pretrained backbones --- ImageNet weights for EfficientNet and DeepfakeBench-pretrained weights for F3Net --- but their binary classification heads were trained from scratch on project-specific datasets, and F3Net underwent full progressive unfreezing across three phases. The Vision Transformer was not retrained at all; it was used directly from the HuggingFace Hub model \texttt{dima806/deepfake\_vs\_real\_image\_detection}, which had already been fine-tuned on approximately 200,000 real and AI-generated images. Training only the components that needed adaptation, rather than running any model fully from scratch, kept energy consumption and compute time substantially lower than a ground-up training run would have required.
+\end{spacing}
+
+\subsection{Impact Assessment}
+
+\begin{spacing}{1.5}
+The system achieves a false negative rate of 8\% (40 missed deepfakes out of 500) on the test set, which is a meaningful improvement over a naive baseline of 50\% for random classification. The interpretable heatmap outputs reduce the cognitive load on human reviewers by directing their attention to specific image regions rather than asking them to make an unsupported binary judgement.
+
+The uncertain verdict band (scores between 0.38 and 0.62) is a deliberate design choice that improves the quality of downstream human decisions: borderline cases are flagged for review rather than silently passed through, which reduces the risk of confident wrong verdicts being acted upon. In a content moderation context, this translates directly to fewer pieces of authentic content being incorrectly removed and fewer manipulated pieces being missed.
+
+Quantifying impact beyond detection metrics is difficult at this stage because the system has not yet been deployed in a production environment. A realistic path to measurable community impact would require integration with an existing platform --- a fact-checking organisation, a social media API, or a digital banking verification workflow --- which is outside the scope of this project but a natural next step.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 6.3  Recommendations for Future Work
+%------------------------------------------------------------------
+\section{Recommendations for Future Work}
+
+\begin{spacing}{1.5}
+Several concrete improvements would make this system significantly more useful in the near term.
+
+\noindent\textbf{Better training data.}\quad
+The biggest single improvement available is access to CelebDF-v2 and the full FaceForensics++ benchmark. These datasets cover a wider range of face-swap methods and contain higher-quality manipulation examples than the Kaggle datasets used here. EfficientNet-B4 in particular would benefit substantially from retraining on a more diverse set of facial manipulation types. Future work should also incorporate more Stable Diffusion and DALL-E generated images as these become increasingly common.
+
+\noindent\textbf{Formal video evaluation.}\quad
+The video detection pipeline needs a proper benchmark evaluation. DF-TIMIT and FaceForensics++ (video split) are the standard choices. Without this, it is not possible to report reliable performance figures for the video path, which limits the system's credibility for video-facing applications.
+
+\noindent\textbf{Adversarial robustness testing.}\quad
+The system has not been tested against images specifically crafted to evade detection --- a known attack surface for neural network classifiers. Adding adversarial examples to the training mix (adversarial training) and evaluating on perturbation benchmarks would give a more complete picture of real-world reliability.
+
+\noindent\textbf{Continuous model updates.}\quad
+Deepfake generation methods evolve quickly. A static model trained today will degrade as new generators emerge. The architecture should be extended to support periodic retraining on new data, with a versioned model registry that allows rollback if a new model performs worse on existing benchmarks.
+
+\noindent\textbf{Multi-modal detection.}\quad
+The current system handles images only (and extends to video via frame sampling). A meaningful extension would be audio-visual consistency checking --- detecting cases where the lip movements in a video do not match the audio track, which is a common tell in poorly produced face-swap videos.
+
+\noindent\textbf{Edge and mobile deployment.}\quad
+The current backend requires a server. Distilling the ensemble into a smaller model suitable for on-device inference would enable use cases that cannot rely on a network connection, such as field verification by journalists in low-connectivity environments.
+\end{spacing}
+
+%------------------------------------------------------------------
+% 6.4  Future Scope
+%------------------------------------------------------------------
+\section{Future Scope}
+
+\begin{spacing}{1.5}
+Looking beyond immediate improvements, deepfake detection is likely to remain a relevant and active research area for the foreseeable future, and the direction the field takes will shape how useful systems like this one can be.
+
+The arms race dynamic between generators and detectors is the fundamental tension. Every improvement in detection accuracy provides an incentive for generator developers to produce harder examples, and the reverse is also true. This means that a system built today cannot be treated as a finished product --- it needs to be maintained. The ensemble architecture used here is well-suited to this because individual models can be retrained or replaced without redesigning the full pipeline.
+
+A more ambitious direction is moving from per-image detection toward provenance tracking: rather than asking ``is this fake?'' after the fact, emerging standards like C2PA (Coalition for Content Provenance and Authenticity) attach cryptographic metadata to images at the point of capture, making tampering detectable without relying on a classifier at all. Detection systems like ours would complement rather than replace this approach --- they are useful for images that lack provenance metadata, which is currently the vast majority of content on the internet.
+
+Regulatory pressure is also increasing. The EU AI Act classifies deepfake generation as a high-risk AI activity and requires labelling of synthetic media. In this context, detection tools may become part of a compliance stack rather than a standalone application, which would create institutional demand and funding that does not currently exist for student-scale projects.
+
+In the shorter term, the most practical expansion of this project would be wrapping the API in a browser extension that checks images as users browse, or integrating with a fact-checking workflow. Both are technically straightforward given the existing REST API and would demonstrate real-world utility without requiring significant additional model development. This feels like the right next step --- building something small enough to actually ship rather than adding complexity that keeps the system perpetually in development.
+\end{spacing}

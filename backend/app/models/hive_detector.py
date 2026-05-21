@@ -1,22 +1,23 @@
 """
-Hive AI deepfake detection model.
+Hive AI deepfake detection via the V3 Vision-Language Model (VLM).
 
-Calls the Hive AI deepfake-image-detection API and maps the result to a
-fake_prob score. Only registered in the ensemble if `ext_api_key` is set.
+The V3 Playground key uses the OpenAI-compatible chat completions API
+with model `hive/vision-language-model`.  The image is sent base64-encoded
+inside the user message and the model is prompted to return a 0-1 fake
+probability as a bare decimal.
 
-API docs : https://docs.thehive.ai/reference/deepfake-image-detection
-V3 key   : POST https://api.thehive.ai/api/v3/task/sync
-           Authorization: Bearer <secret_key>
-V2 key   : POST https://api.thehive.ai/api/v2/task/sync
-           Authorization: Token <project_key>
-Body     : multipart/form-data — field "media"
+Endpoint : POST https://api.thehive.ai/api/v3/chat/completions
+Auth     : Authorization: Bearer <secret_key>
+Model    : hive/vision-language-model
 
-The auth scheme is chosen automatically based on the URL:
-  /v3/ → Bearer    /v2/ → Token
+Note: V2 project keys (Token auth, /api/v2/task/sync) use a different
+classifier-style API and are NOT compatible with V3 Playground keys.
 """
 from __future__ import annotations
 
+import base64
 import io
+import re
 import time
 
 import numpy as np
@@ -24,21 +25,34 @@ import numpy as np
 from app.config.settings import settings
 from app.models.base import BaseDetector, ModelOutput
 
-_DEFAULT_HIVE_ENDPOINT = "https://api.thehive.ai/api/v3/task/sync"
+_DEFAULT_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions"
+_MODEL_ID = "hive/vision-language-model"
 
-_FAKE_CLASSES = {
-    "yes_ai_generated",
-    "ai_generated",
-    "deepfake",
-    "yes_deepfake",
-}
+# Carefully worded to elicit a bare decimal and nothing else.
+_PROMPT = (
+    "Examine this image for signs of being AI-generated, a GAN or diffusion model "
+    "output, or a deepfake (face swap / face reenactment). Look for: unnaturally smooth "
+    "skin, inconsistent lighting, blurred hair or teeth, colour bleeding at edges, "
+    "implausible eye reflections, or perfect bilateral symmetry. "
+    "Reply with ONLY a single decimal number between 0.00 and 1.00 — the probability "
+    "that this image is AI-generated or fake. "
+    "0.00 = definitely authentic.  1.00 = definitely AI-generated / fake. "
+    "No other text."
+)
 
 
-def _auth_header(api_key: str, endpoint_url: str) -> str:
-    """Return the correct Authorization header value for the given endpoint version."""
-    if "/v3/" in endpoint_url:
-        return f"Bearer {api_key}"
-    return f"Token {api_key}"
+def _parse_vlm_response(text: str) -> float | None:
+    """Extract the first float in [0, 1] from the VLM reply."""
+    text = text.strip()
+    # Match any decimal/integer: '0.87', '.87', '87%' → 0.87
+    matches = re.findall(r"\d+\.?\d*", text)
+    for m in matches:
+        v = float(m)
+        if v > 1.0:
+            v /= 100.0          # percentage form (e.g. "85" → 0.85)
+        if 0.0 <= v <= 1.0:
+            return v
+    return None
 
 
 class HiveDetector(BaseDetector):
@@ -52,9 +66,8 @@ class HiveDetector(BaseDetector):
         self._api_key = weights_path  # registry passes the api_key here
         if not self._api_key:
             raise ValueError("Hive API key is empty — set ext_api_key in settings.")
-        endpoint = settings.ext_api_url or _DEFAULT_HIVE_ENDPOINT
-        scheme = "Bearer" if "/v3/" in endpoint else "Token"
-        print(f"✅ Hive detector ready (key: …{self._api_key[-4:]}, scheme: {scheme}, url: {endpoint})")
+        endpoint = settings.ext_api_url or _DEFAULT_ENDPOINT
+        print(f"✅ Hive VLM detector ready (key: …{self._api_key[-4:]}, endpoint: {endpoint})")
         self._loaded = True
 
     @property
@@ -67,29 +80,54 @@ class HiveDetector(BaseDetector):
         t0 = time.time()
         pil = preprocessed["pil"]
 
+        # Encode image as base64 JPEG
         buf = io.BytesIO()
-        pil.save(buf, format="JPEG", quality=92)
-        buf.seek(0)
+        pil.save(buf, format="JPEG", quality=88)
+        b64 = base64.b64encode(buf.getvalue()).decode()
 
         fake_prob = 0.5
         try:
-            hive_endpoint = settings.ext_api_url or _DEFAULT_HIVE_ENDPOINT
+            endpoint = settings.ext_api_url or _DEFAULT_ENDPOINT
+            payload = {
+                "model": _MODEL_ID,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text",      "text": _PROMPT},
+                            {"type": "image_url", "image_url": {
+                                "url": f"data:image/jpeg;base64,{b64}"
+                            }},
+                        ],
+                    }
+                ],
+                "max_tokens": 16,
+            }
             resp = requests.post(
-                hive_endpoint,
-                headers={"Authorization": _auth_header(self._api_key, hive_endpoint)},
-                files={"media": ("image.jpg", buf, "image/jpeg")},
-                timeout=20,
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=30,
             )
             if not resp.ok:
                 try:
                     msg = resp.json().get("message", resp.text[:200])
                 except Exception:
                     msg = resp.text[:200]
-                print(f"⚠️ Hive API {resp.status_code}: {msg} — using neutral score 0.5")
+                print(f"⚠️ Hive VLM {resp.status_code}: {msg} — using neutral score 0.5")
             else:
-                fake_prob = _parse_hive_response(resp.json())
+                content = resp.json()["choices"][0]["message"]["content"]
+                parsed = _parse_vlm_response(content)
+                if parsed is not None:
+                    fake_prob = parsed
+                else:
+                    print(f"⚠️ Hive VLM: could not parse score from reply {content!r} — using 0.5")
+
         except Exception as exc:
-            print(f"⚠️ Hive API call failed: {exc!r} — using neutral score 0.5")
+            print(f"⚠️ Hive VLM call failed: {exc!r} — using neutral score 0.5")
 
         fake_prob = max(min(float(fake_prob), 0.999), 0.001)
         elapsed = (time.time() - t0) * 1000
@@ -101,24 +139,3 @@ class HiveDetector(BaseDetector):
             inference_time_ms=elapsed,
             features=np.array([fake_prob]),
         )
-
-
-def _parse_hive_response(data: dict) -> float:
-    """
-    Parse both V2 and V3 Hive response shapes.
-
-    V2: {"output": [{"classes": [{"class": "...", "score": 0.9}, ...]}]}
-    V3: same outer shape but may differ in class names — handled by _FAKE_CLASSES set.
-    """
-    try:
-        classes: list[dict] = data["output"][0]["classes"]
-        score_map = {c["class"]: float(c["score"]) for c in classes}
-        fake_total = sum(v for k, v in score_map.items() if k in _FAKE_CLASSES)
-        if fake_total > 0:
-            return fake_total
-        real_keys = [k for k in score_map if k not in _FAKE_CLASSES]
-        if real_keys:
-            return 1.0 - min(sum(score_map[k] for k in real_keys), 1.0)
-    except (KeyError, IndexError, TypeError):
-        pass
-    return 0.5

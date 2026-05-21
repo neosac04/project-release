@@ -58,9 +58,9 @@ class Settings(BaseSettings):
     video_frames_to_sample: int = 32
     max_video_size_mb: int = 100
 
-    # External API (Hive) — activates Hive model when ext_api_key is set.
-    # V3 Playground keys use the /v3/ endpoint; legacy V2 project keys use /v2/.
-    ext_api_url: str = "https://api.thehive.ai/api/v3/task/sync"
+    # External API (Hive VLM) — activates Hive model when ext_api_key is set.
+    # V3 Playground key → chat completions VLM endpoint (Bearer auth).
+    ext_api_url: str = "https://api.thehive.ai/api/v3/chat/completions"
     ext_api_key: str = "nOzl9hL/htppcOg/HCcV4A=="
 
 

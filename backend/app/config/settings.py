@@ -59,9 +59,9 @@ class Settings(BaseSettings):
     max_video_size_mb: int = 100
 
     # External API (Hive) — activates Hive model when ext_api_key is set.
-    ext_api_url: str = "https://api.thehive.ai/api/v2/task/sync"
-    ext_api_key: str = "nOzl9hL/htppcOg/HCcV4A==" \
-    ""
+    # V3 Playground keys use the /v3/ endpoint; legacy V2 project keys use /v2/.
+    ext_api_url: str = "https://api.thehive.ai/api/v3/task/sync"
+    ext_api_key: str = "nOzl9hL/htppcOg/HCcV4A=="
 
 
 settings = Settings()

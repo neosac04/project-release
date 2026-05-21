@@ -18,12 +18,26 @@ import numpy as np
 from PIL import Image
 
 from app.analysis.suite import run_analysis
-from app.core.pipeline import DetectionPipeline, _to_analysis_metrics
+from app.core.pipeline import DetectionPipeline, _display_score, _to_analysis_metrics
 from app.preprocessing.face_detection import detect_largest_face
 from app.schemas.response import ModelVote
 from app.schemas.video_response import FrameResult, VideoDetectionResponse
 from app.video.frame_extractor import extract_frames
 from app.video.temporal_aggregator import aggregate
+
+# For video analysis we skip ViT and Hive per frame:
+#   • ViT is trained on AI-generated imagery (GAN/diffusion), not face-swaps — it gives ~0%
+#     for FaceForensics++ content and drags the fusion score into the real zone.
+#   • Hive VLM has a 30-second HTTP timeout; 32 frames × 30 s = 16 minutes.
+# Only EfficientNet, F3Net, and SigLIP run per frame.  Their weights are re-normalised
+# inside fuse() automatically when ViT/Hive are absent.
+_VIDEO_SKIP_MODELS: frozenset[str] = frozenset({"vit", "hive"})
+
+# Raw fusion threshold above which a video is classified as fake.
+# Lower than the image threshold (0.62) because, without ViT, the
+# three remaining models produce moderate-confidence scores (~0.50–0.65)
+# for face-swap deepfakes.
+_VIDEO_FAKE_THRESHOLD: float = 0.50
 
 
 class VideoPipeline:
@@ -57,9 +71,15 @@ class VideoPipeline:
                 Image.fromarray(face_crop) if face_detected else frame
             )
 
-            frame_det = await self._image_pipeline.run(image_to_analyse)
-            score = frame_det.final_score
-            per_frame_scores.append(score)
+            # Run with raw scores (apply_display=False) so aggregation works on
+            # un-mapped probabilities.  Skip ViT (wrong domain) and Hive (too slow).
+            frame_det = await self._image_pipeline.run(
+                image_to_analyse,
+                apply_display=False,
+                skip_models=_VIDEO_SKIP_MODELS,
+            )
+            raw_score = frame_det.final_score          # raw fusion score
+            per_frame_scores.append(raw_score)
             per_frame_votes.append({
                 name: vote.fake_prob for name, vote in frame_det.model_votes.items()
             })
@@ -67,14 +87,19 @@ class VideoPipeline:
             if face_detected:
                 faces_detected_count += 1
 
+            # Per-frame timeline shows display-mapped score for UI consistency
+            frame_display = _display_score(raw_score, _VIDEO_FAKE_THRESHOLD)
             frame_results.append(FrameResult(
                 frame_index=frame_idx,
                 timestamp_sec=round(timestamp_sec, 3),
-                final_score=round(score, 4),
+                final_score=round(frame_display, 4),
                 face_detected=face_detected,
             ))
 
-        final_score = aggregate(per_frame_scores, strategy="confident")
+        # Aggregate raw per-frame scores, then apply display mapping once.
+        final_score_raw = aggregate(per_frame_scores, strategy="confident")
+        final_score = _display_score(final_score_raw, _VIDEO_FAKE_THRESHOLD)
+
         temporal_consistency = (
             float(np.std(per_frame_scores)) if len(per_frame_scores) > 1 else 0.0
         )
@@ -86,15 +111,17 @@ class VideoPipeline:
         aggregated_votes: dict[str, ModelVote] = {}
         for model_name in sorted(all_models):
             model_scores = [v.get(model_name, 0.5) for v in per_frame_votes]
-            mean_fake = float(np.mean(model_scores))
+            mean_fake_raw = float(np.mean(model_scores))
+            mean_fake_display = _display_score(mean_fake_raw, _VIDEO_FAKE_THRESHOLD)
             aggregated_votes[model_name] = ModelVote(
-                fake_prob=round(mean_fake, 4),
-                real_prob=round(1.0 - mean_fake, 4),
+                fake_prob=round(mean_fake_display, 4),
+                real_prob=round(1.0 - mean_fake_display, 4),
                 inference_time_ms=0.0,
             )
 
-        verdict: str = "fake" if final_score >= 0.5 else "real"
-        is_uncertain = 0.38 <= final_score <= 0.62
+        # Verdict and uncertainty use the raw aggregated score.
+        verdict: str = "fake" if final_score_raw >= _VIDEO_FAKE_THRESHOLD else "real"
+        is_uncertain = 0.38 <= final_score_raw < _VIDEO_FAKE_THRESHOLD
 
         # Analysis on middle frame (best-effort)
         analysis_metrics = None
@@ -109,6 +136,7 @@ class VideoPipeline:
 
         explanations = _build_explanations(
             final_score=final_score,
+            final_score_raw=final_score_raw,
             frames_analyzed=len(frames),
             faces_detected=faces_detected_count,
             temporal_consistency=temporal_consistency,
@@ -136,20 +164,28 @@ class VideoPipeline:
 
 def _build_explanations(
     final_score: float,
+    final_score_raw: float,
     frames_analyzed: int,
     faces_detected: int,
     temporal_consistency: float,
     per_frame_scores: List[float],
     is_uncertain: bool,
 ) -> List[str]:
+    """Build human-readable explanations for a video detection result.
+
+    Args:
+        final_score: Display-mapped final score (shown in UI).
+        final_score_raw: Raw aggregated score before display mapping (used for logic).
+        per_frame_scores: Raw per-frame scores (for frame-level statistics).
+    """
     explanations: List[str] = []
     pct = round(final_score * 100)
 
-    if final_score >= 0.5:
+    if final_score_raw >= _VIDEO_FAKE_THRESHOLD:
         explanations.append(
             f"Video analysis across {frames_analyzed} frames: {pct}% likely a deepfake. "
             + ("Strong and consistent manipulation signals detected."
-               if pct >= 70 else "Moderate manipulation signals — treat with caution.")
+               if pct >= 88 else "Moderate manipulation signals — treat with caution.")
         )
     else:
         real_pct = 100 - pct
@@ -177,16 +213,17 @@ def _build_explanations(
             "scores vary significantly between frames, suggesting partial manipulation."
         )
 
-    high_fake_count = sum(1 for s in per_frame_scores if s > 0.7)
+    # Count raw per-frame scores above the fake threshold
+    high_fake_count = sum(1 for s in per_frame_scores if s > _VIDEO_FAKE_THRESHOLD)
     if high_fake_count > 0:
         explanations.append(
-            f"{high_fake_count} frame(s) showed strong manipulation signals (>70% fake probability)."
+            f"{high_fake_count}/{frames_analyzed} frame(s) showed manipulation signals "
+            f"above the fake threshold ({round(_VIDEO_FAKE_THRESHOLD * 100)}%)."
         )
 
     if is_uncertain:
         explanations.append(
-            f"⚠ The final score ({final_score:.2f}) falls in the uncertainty band (0.38–0.62). "
-            "Human review is recommended for borderline cases."
+            "⚠ Signals are mixed — borderline result. Human review is recommended."
         )
 
     return explanations

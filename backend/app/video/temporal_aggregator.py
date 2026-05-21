@@ -9,12 +9,17 @@ from typing import List
 
 def confident_strategy(
     scores: List[float],
-    high_conf_threshold: float = 0.8,
+    high_conf_threshold: float = 0.55,
     min_high_conf: int = 2,
 ) -> float:
     """
     If >= min_high_conf frames exceed high_conf_threshold, return their mean.
     Otherwise return the overall mean across all frames.
+
+    Threshold lowered from 0.80 to 0.55: the video pipeline now operates on raw
+    scores (no temperature scaling) from only EfficientNet + F3Net + SigLIP.
+    FaceForensics++ face-swap deepfakes typically score 0.55–0.70 with these
+    three models, so 0.55 is a more appropriate confidence boundary than 0.80.
     """
     if not scores:
         return 0.5

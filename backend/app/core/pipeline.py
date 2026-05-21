@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import math as _math
 import time
 import uuid
 from pathlib import Path
@@ -10,19 +9,28 @@ import numpy as np
 from PIL import Image
 
 
-# ── Display temperature ────────────────────────────────────────────────────────
-# Applied to displayed scores only (model_votes + final_score in response).
-# Fusion computation uses raw un-softened probabilities.
-# T=1.0 → no change.  T>1.0 pulls predictions toward 50%.
-# T=1.3: 0.97→0.94, 0.95→0.92, 0.90→0.87, 0.80→0.78, 0.65→0.64
-_DISPLAY_TEMPERATURE: float = 1.3
+# ── Display score mapping ──────────────────────────────────────────────────────
+# Maps raw fusion scores into a human-believable display range:
+#   Fake region  (raw > fake_threshold) → [0.86, 0.96]
+#   Real region  (raw < 0.38)           → [0.04, 0.14]
+#   Uncertain    (0.38 – fake_threshold) → [0.40, 0.60]
+#
+# fake_threshold defaults to 0.62 for images.
+# Pass fake_threshold=0.50 for video aggregation (see video/pipeline.py).
 
 
-def _soften(s: float) -> float:
-    """Logit temperature scaling for display: reduces near-certain predictions to a realistic range."""
-    s = max(1e-7, min(1 - 1e-7, s))
-    logit = _math.log(s / (1 - s))
-    return float(1.0 / (1.0 + _math.exp(-logit / _DISPLAY_TEMPERATURE)))
+def _display_score(raw: float, fake_threshold: float = 0.62) -> float:
+    """Map a raw probability into the capped display range."""
+    if raw > fake_threshold:
+        t = min((raw - fake_threshold) / max(1.0 - fake_threshold, 1e-9), 1.0)
+        return 0.86 + t * 0.10          # → [0.86, 0.96]
+    elif raw < 0.38:
+        t = raw / 0.38
+        return 0.04 + t * 0.10          # → [0.04, 0.14]
+    else:
+        uncertain_width = max(fake_threshold - 0.38, 1e-9)
+        t = (raw - 0.38) / uncertain_width
+        return 0.40 + t * 0.20          # → [0.40, 0.60]
 
 from app.analysis.suite import AnalysisResult, run_analysis
 from app.core.fusion import fuse
@@ -87,7 +95,28 @@ class DetectionPipeline:
     def __init__(self) -> None:
         self._registry = ModelRegistry.get_instance()
 
-    async def run(self, image: Image.Image) -> DetectionResponse:
+    async def run(
+        self,
+        image: Image.Image,
+        apply_display: bool = True,
+        skip_models: frozenset[str] = frozenset(),
+        fake_threshold: float = 0.62,
+    ) -> DetectionResponse:
+        """Run the full detection pipeline.
+
+        Args:
+            image: The PIL image to analyse.
+            apply_display: If True (default), map raw scores to the display range
+                [0.86–0.96] for fake, [0.04–0.14] for real.  Set False when the
+                caller (e.g. video pipeline) wants raw probabilities for
+                aggregation and will apply display mapping itself.
+            skip_models: Model names to exclude from this run.  Useful for
+                skipping slow or irrelevant models (e.g. "vit", "hive") in the
+                video per-frame loop.
+            fake_threshold: Raw score above which a prediction is considered
+                "fake" for display mapping.  Default 0.62 for images; pass 0.50
+                for video aggregation.
+        """
         t_start = time.time()
 
         source_rgb = np.array(image.convert("RGB"))
@@ -101,10 +130,13 @@ class DetectionPipeline:
         face_input = preprocess(face_image)
         full_input = preprocess(full_image)
 
-        # Dispatch all loaded detectors in parallel via a thread pool.
+        # Dispatch loaded detectors in parallel via a thread pool.
+        # Models in skip_models are excluded (e.g. "vit"/"hive" for video frames).
         loop = asyncio.get_event_loop()
         tasks: dict[str, asyncio.Future] = {}
         for name, det in self._registry.all().items():
+            if name in skip_models:
+                continue
             chosen_input = full_input if name in _FULL_IMAGE_MODELS else face_input
             tasks[name] = loop.run_in_executor(None, det.predict, chosen_input)
 
@@ -114,28 +146,32 @@ class DetectionPipeline:
             raise RuntimeError("No detection models are loaded.")
 
         # Build model votes — hive runs silently; its signal feeds fusion but is never exposed.
-        # Apply display temperature to soften near-certain predictions for realism.
+        # Apply display mapping when apply_display=True.
+        def _maybe_display(raw: float) -> float:
+            return _display_score(raw, fake_threshold) if apply_display else raw
+
         model_votes: dict[str, ModelVote] = {
             name: ModelVote(
-                fake_prob=_soften(out.fake_prob),
-                real_prob=1.0 - _soften(out.fake_prob),
+                fake_prob=_maybe_display(out.fake_prob),
+                real_prob=1.0 - _maybe_display(out.fake_prob),
                 inference_time_ms=out.inference_time_ms,
             )
             for name, out in outputs.items()
             if name != "hive"
         }
 
-        # Fusion (all models including hive contribute to final_score)
+        # Fusion (all loaded models including hive contribute to raw final_score)
         scores = {name: out.fake_prob for name, out in outputs.items()}
         fusion = fuse(scores, face_detected=face_detected)
 
-        # Displayed fusion weights: strip hive and re-normalise so the 4 models sum to 100%
+        # Displayed fusion weights: strip hive and re-normalise so the visible models sum to 100%
         visible_weights = {k: v for k, v in fusion.weights.items() if k != "hive"}
         _w_total = sum(visible_weights.values())
         if _w_total > 0:
             visible_weights = {k: v / _w_total for k, v in visible_weights.items()}
 
-        verdict: str = "fake" if fusion.final_score >= 0.5 else "real"
+        raw_final = float(fusion.final_score)
+        verdict: str = "fake" if raw_final >= 0.5 else "real"
 
         # ── Analysis suite ────────────────────────────────────────────────────
         # Try to get saliency from SigLIP first (face-focused), then ViT.
@@ -172,7 +208,7 @@ class DetectionPipeline:
 
         return DetectionResponse(
             result_id=str(uuid.uuid4()),
-            final_score=_soften(float(fusion.final_score)),
+            final_score=_maybe_display(raw_final),
             verdict=verdict,  # type: ignore[arg-type]
             face_detected=face_detected,
             is_uncertain=fusion.is_uncertain,
